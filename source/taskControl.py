@@ -1,0 +1,733 @@
+# -*- coding: utf-8 -*-
+
+import os
+import random
+import threading
+import time
+import ctypes
+from ctypes import wintypes
+
+import cv2
+import numpy as np
+import win32api
+import win32con
+import win32gui
+import win32process
+from PIL import ImageGrab
+import json
+
+APP_SAMPLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
+
+TH32CS_SNAPPROCESS = 0x00000002
+
+
+class PROCESSENTRY32W(ctypes.Structure):
+    _fields_ = [("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", wintypes.WCHAR * 260)]
+
+
+def find_pids_by_process_name(name):
+    """通过 Toolhelp32 快照按进程名查找 PID 列表（不区分大小写）。
+
+    读快照不需要 OpenProcess，目标进程提权或有反作弊保护时也能找到。
+    """
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snapshot or snapshot == wintypes.HANDLE(-1).value:
+        return []
+    pids = []
+    entry = PROCESSENTRY32W()
+    entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+    try:
+        ret = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while ret:
+            if entry.szExeFile.lower() == name.lower():
+                pids.append(entry.th32ProcessID)
+            ret = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    return pids
+
+
+def find_window_by_process_name(name):
+    """按进程名查找可见窗口句柄，未找到返回 None。"""
+    pids = set(find_pids_by_process_name(name))
+    if not pids:
+        return None
+    matches = []
+
+    def callback(hwnd, _):
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+        if pid in pids:
+            matches.append(hwnd)
+
+    win32gui.EnumWindows(callback, None)
+    return matches[0] if matches else None
+
+
+
+class taskControl:
+
+    def __init__(self, configPath=None, ui=None):
+        self.configPath = configPath
+        self.ui = ui
+        self.taskRuning = False
+        self.taskName = None
+        self.taskType = None
+        self.taskTarget = None
+        self.taskThread_ = None
+        self.taskLoopCnt = 0
+        self._template_cache = {}
+        if configPath:  # 读取配置文件
+            self.loadConfig()
+
+    def taskThread(self):
+        """任务处理主逻辑。"""
+        self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
+        if not self.setupWindow():
+            return
+        while self.taskRuning:
+            self.activateWindow()
+            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
+                self.standardFlow()
+            else:  # 钓鱼任务，进入钓鱼流程（预留）
+                pass
+        self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
+
+    def loadConfig(self):
+        """读取 config.json"""
+        self.ui._tasks = []
+        self.ui.taskListWidget.clear()
+        if not os.path.exists(self.configPath): # 配置文件不存在则创建
+            self.configProcess = "MabinogiMobile.exe"
+            self.configResolution = (1280, 960)
+            self.configMatchThreshold = 0.86
+            self.configClickRandomOffset = 15
+            self.saveConfig()
+            return
+        try:
+            with open(self.configPath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            self.ui.log_printf("ERROR", "读取配置文件失败: %s", e)
+            return
+        # 读取任务列表
+        for task in data.get("tasks", []): 
+            self.ui._tasks.append(task)
+            self.ui.taskListWidget.addItem(task["name"])
+        # 读取配置项
+        self.configProcess = data.get("gameProcess", "MabinogiMobile.exe")
+        self.configResolution = tuple(data.get("gameResolution", [1280, 960]))
+        self.configMatchThreshold = data.get("matchThreshold", 0.86)
+        self.configClickRandomOffset = data.get("clickRandomOffset", 15)
+
+    def saveConfig(self):
+        """保存 config.json"""
+        data = {
+            "tasks": self.ui._tasks,
+            "gameProcess": self.configProcess,
+            "gameResolution": self.configResolution,
+            "matchThreshold": self.configMatchThreshold,
+            "clickRandomOffset": self.configClickRandomOffset,
+        }
+        with open(self.configPath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+    def startTask(self, taskName, taskType, taskTarget):
+        if self.taskRuning:  # 正在运行任务，不允许启动新的任务
+            self.ui.log_printf("ERROR", u"任务已启动，请勿重复启动")
+            return
+        self.taskName = taskName
+        self.taskType = taskType
+        self.taskTarget = taskTarget
+        self.taskRuning = True
+        self.ui.log_printf("INFO", u"启动任务线程: name=%s type=%s target=%s",
+                  taskName, taskType, taskTarget)
+        self.taskThread_ = threading.Thread(target=self.taskThread, daemon=True)
+        self.taskThread_.start()
+
+    def stopTask(self):
+        self.ui.log_printf("INFO", u"停止任务，等待线程结束...")
+        self.taskRuning = False
+        # if self.taskThread_:
+        #     self.taskThread_.join()
+            
+    def setupWindow(self):
+        """查找目标进程窗口，找不到则每秒重试直到任务停止。"""
+        logged = False
+        while self.taskRuning:
+            hwnd = find_window_by_process_name(self.configProcess)
+            if hwnd:
+                self.hwnd = hwnd
+                self.ui.log_printf("DEBUG", u"已找到目标窗口: %s",
+                                   self.configProcess)
+                self.ui.log_printf("DEBUG", u"窗口句柄 hwnd=%s", hwnd)
+                return True
+            if not logged:
+                self.ui.log_printf("WARNING",
+                                   u"未找到进程“%s”的窗口，等待中...",
+                                   self.configProcess)
+                logged = True
+            time.sleep(1.0)
+        return False
+
+    def activateWindow(self):
+        """将目标窗口置于前台。"""
+        self.ui.log_printf("DEBUG", u"激活目标窗口")
+        try:
+            win32gui.ShowWindow(self.hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(self.hwnd)
+        except Exception as e:
+            self.ui.log_printf("WARNING", u"激活窗口失败: %s", e)
+        time.sleep(0.2)
+
+    def ensureForeground(self):
+        """输入前确保目标窗口在前台，否则重新激活（点击/按键落在前台窗口上）。"""
+        try:
+            if self.hwnd and win32gui.GetForegroundWindow() != self.hwnd:
+                self.ui.log_printf("INFO", u"焦点不在目标窗口，重新激活")
+                self.activateWindow()
+        except Exception:
+            pass
+        
+    def loadTemplate(self, rel_path):
+        """加载目标图像（带缓存；imdecode 方式读取以兼容非 ASCII 路径）。"""
+        if rel_path not in self._template_cache:
+            path = os.path.join(APP_SAMPLE_DIR, rel_path)
+            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8),
+                               cv2.IMREAD_COLOR)
+            if img is None:
+                self.ui.log_printf("ERROR", u"无法读取目标图像: %s", path)
+            else:
+                self.ui.log_printf("INFO", u"加载目标图像 %s", rel_path)
+            self._template_cache[rel_path] = img
+        return self._template_cache[rel_path]
+        
+    def captureGame(self):
+        """捕捉窗口客户区画面并缩放至目标分辨率。"""
+        try:
+            origin, size = self.clientGeometry()
+            img = ImageGrab.grab(bbox=(origin[0], origin[1],
+                                       origin[0] + size[0],
+                                       origin[1] + size[1]))
+        except OSError as e:
+            self.ui.log_printf("WARNING", u"截图失败: %s", e)
+            return None
+        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        return cv2.resize(frame, self.configResolution)
+
+    def clientGeometry(self):
+        """返回窗口客户区在屏幕上的 (原点, 尺寸)。"""
+        left, top, right, bottom = win32gui.GetClientRect(self.hwnd)
+        origin = win32gui.ClientToScreen(self.hwnd, (left, top))
+        return origin, (right - left, bottom - top)
+
+    def findImage(self, rel_path):
+        """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。"""
+        template = self.loadTemplate(rel_path)
+        shot = self.captureGame() if template is not None else None
+        if shot is None:
+            return None
+        result = cv2.matchTemplate(shot, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(result)
+        if max_val < self.configMatchThreshold:
+            return None
+        h, w = template.shape[:2]
+        pos = (max_loc[0] + w // 2, max_loc[1] + h // 2)
+        self.ui.log_printf("INFO", u"匹配到 %s 相似度=%.2f 位置=%s", rel_path, max_val, str(pos))
+        return pos
+    
+    def waitImage(self, rel_path, timeout=None, interval=0.2):
+        """循环查找目标图像直到出现；timeout 秒未出现返回 None。"""
+        start = time.time()
+        while self.taskRuning:
+            pos = self.findImage(rel_path)
+            if pos is not None:
+                return pos
+            if timeout is not None and time.time() - start >= timeout:
+                self.ui.log_printf("WARNING", u"%ss 内未找到 %s", timeout, rel_path)
+                return None
+            time.sleep(interval)
+        return None
+
+    def pressKey(self, key):
+        """按下并松开指定按键，支持单个字母/数字及 "space"、"esc"。"""
+        self.ensureForeground()
+        if key == "space":
+            vk = win32con.VK_SPACE
+        elif key == "esc":
+            vk = win32con.VK_ESCAPE
+        else:
+            vk = ord(key.upper())
+        self.ui.log_printf("DEBUG", u"按键 %s", key)
+        win32api.keybd_event(vk, 0, 0, 0)
+        time.sleep(0.15)
+        win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
+
+    def moveCursor(self, pos):
+        """将设置坐标系下的点换算为屏幕坐标并移动光标（不点击）。"""
+        origin, size = self.clientGeometry()
+        x = origin[0] + int(pos[0] * size[0] / self.configResolution[0])
+        y = origin[1] + int(pos[1] * size[1] / self.configResolution[1])
+        self.ui.log_printf("DEBUG", u"移动光标 (%d, %d)", x, y)
+        win32api.SetCursorPos((x, y))
+
+    def clickPos(self, pos):
+        """将配置坐标系下的点换算为屏幕坐标并点击鼠标左键。
+
+        点击前在 XY 轴各加 CLICK_RANDOM_OFFSET 像素以内的随机偏移。
+        """
+        self.ensureForeground()
+        origin, size = self.clientGeometry()
+        x = origin[0] + int(pos[0] * size[0] / self.configResolution[0])
+        y = origin[1] + int(pos[1] * size[1] / self.configResolution[1])
+        x += random.randint(-self.configClickRandomOffset, self.configClickRandomOffset)
+        y += random.randint(-self.configClickRandomOffset, self.configClickRandomOffset)
+        self.ui.log_printf("DEBUG", u"点击 (%d, %d)", x, y)
+        win32api.SetCursorPos((x, y))
+        time.sleep(0.05)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        time.sleep(0.15)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
+    def scrollDown(self, times=1, interval=0.05):
+        """输入鼠标滚轮向下滚动 times 次。"""
+        self.ui.log_printf("DEBUG", u"滚轮向下滚动 %d 次", times)
+        for _ in range(times):
+            if not self.taskRuning:
+                return
+            win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -120, 0)
+            time.sleep(interval)
+
+
+    def taskThread(self):
+        """任务处理主逻辑。"""
+        self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
+        if not self.setupWindow():
+            self.ui.log_printf("ERROR", u"任务失败：%s, 未找到目标进程", self.taskName)
+            return
+        while self.taskRuning:
+            self.activateWindow()
+            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
+                self.standardFlow()
+                if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
+                    self.crossDayFlow()
+            else:  # 钓鱼任务，进入钓鱼流程（预留）
+                pass
+        self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
+        
+    def standardFlow(self):
+        self.ui.log_printf("INFO", u"单轮采集开始")
+        # 确认为当前为主界面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
+                break
+            self.pressKey("esc")
+            time.sleep(1.0)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 返回失败")
+                return
+        # 按下C进入人物界面
+        time.sleep(1.0)
+        self.pressKey('c')
+        time.sleep(1.0)
+        # 点击live图标进入生活技能界面
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("liveSkill1.png"))
+            if pos:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 点击生活技能图标
+        type_path = os.path.join("taskType", "%d.png" % self.taskType)
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(type_path)
+            if pos:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 移动光标到采集物列表
+        list_path = os.path.join("taskType", str(self.taskType), "listCheck.png")
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(list_path)
+            if pos:
+                self.moveCursor(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
+                return
+        time.sleep(0.5)
+        # 点击目标采集物
+        target_path = os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget)
+        if self.taskTarget < 4:
+            for i in range(6):
+                if self.taskRuning is False:
+                    return
+                pos = self.findImage(target_path)
+                if pos:
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                    return
+        else:
+            for i in range(12):
+                if self.taskRuning is False:
+                    return
+                self.scrollDown(3)
+                time.sleep(0.2)
+                pos = self.findImage(target_path)
+                if pos:
+                    self.clickPos(pos)
+                    break
+                if i == 11:
+                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                    return
+        time.sleep(1.0)
+        # 点击采集
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("gotoCollection.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
+        time.sleep(1.0)
+        # 检查是否需要维修工具
+        for i in range(4):
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("fixToolMark.png")):
+                self.fixToolFlow()
+                return
+            time.sleep(0.5)
+        # 等待采集完成
+        workDoneCnt = 0
+        for i in range(600):
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("inWorking.png")) is None:
+                workDoneCnt += 1
+                if workDoneCnt >= 3:
+                    self.ui.log_printf("INFO", u"采集完成")
+                    break
+            else:
+                workDoneCnt = 0
+            time.sleep(0.9)
+            # if i == 599:
+            #     self.ui.log_printf("ERROR", u"采集超时")
+            #     return
+        # 整理背包
+        self.taskLoopCnt += 1
+        if self.taskLoopCnt > 4 :
+            self.taskLoopCnt = 0
+            self.packBackpackFlow()
+        self.ui.log_printf("INFO", u"单轮采集完成")
+
+    def fixToolFlow(self):
+        self.ui.log_printf("INFO", u"开始执行修复工具流程")
+        # 返回主界面
+        for i in range(8): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
+                break
+            self.pressKey("esc")
+            time.sleep(0.7)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"从背包返回主界面失败")
+                return
+        # 进入本地地图
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("mapMark.png")):
+                self.pressKey("m")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到地图图标，尝试按 M 键进入失败")
+                return
+        time.sleep(1.0)
+        # 进入欧拉大陆
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("mapOula.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到欧拉大陆图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 移动光标并缩小地图
+        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
+        self.scrollDown(10)
+        time.sleep(0.2)
+        # 点击提尔克那
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("mapTier.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 点击佛格斯
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("mapFogesi.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到佛格斯图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 前往佛格斯
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("gotoFogesi.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                return
+        # 查找修理按钮
+        for i in range(300): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("fixToolKey.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(1)
+            if i == 299:
+                self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
+                return
+        # 按下空格跳过对话
+        time.sleep(1)
+        self.pressKey("space")
+        time.sleep(1)
+        # 点击全部修理
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("fixAllKey.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 按下空格确认
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("fixKey.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.6)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                return
+        time.sleep(1.0)
+        # 跳过对话
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("fixToolOut.png")):
+                self.pressKey("esc")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                return
+        time.sleep(1.0)
+        # 结束对话
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("endTalkKey.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
+                return
+        # 按下空格跳过对话
+        time.sleep(1.5)
+        self.pressKey("space")
+        time.sleep(1)
+        self.ui.log_printf("INFO", u"工具修复流程结束")
+
+
+    def packBackpackFlow(self):
+        self.ui.log_printf("INFO", u"开始执行整理背包流程")
+        # 进入背包
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
+                self.pressKey("i")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"从主界面进入背包失败")
+                return
+        time.sleep(1.0)
+        # 进入整理
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("organize1.png")):
+                self.pressKey("a")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"从背包进入整理失败")
+                return
+        time.sleep(1.0)
+        # 检查是否需要整理
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("noOrganize.png")):
+                self.ui.log_printf("INFO", u"无需整理背包")
+                self.pressKey("esc")
+                time.sleep(1.0)
+                self.pressKey("esc")
+                return
+            time.sleep(0.2)
+        # 整理1
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("organize2.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"执行整理1失败")
+                return
+        time.sleep(1.0)
+        # 整理2
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("organize3.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"执行整理2失败")
+                return
+        time.sleep(1.0)
+        # 确认
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("organizeConfirm.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"执行整理确认失败")
+                return
+        time.sleep(1.0)
+        # 返回主界面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
+                break
+            self.pressKey("esc")
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"从背包返回主界面失败")
+                return
+        self.ui.log_printf("INFO", u"整理背包流程结束")
+        
+    def crossDayFlow(self):
+        # 光标点击画面中心
+        self.clickPos((self.configResolution[0] // 2, self.configResolution[1] // 2))
+        time.sleep(2.0)
+        # 点击跳过出席簿
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay2.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf()
+        time.sleep(2.0)
+        # 点击确认
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("organizeConfirm.png")):
+                self.pressKey("space")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到确认图标")
+        time.sleep(5.0)
+        # 退出SP界面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("stellaPickMark.png")):
+                self.pressKey("esc")
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到退出图标")
+                return

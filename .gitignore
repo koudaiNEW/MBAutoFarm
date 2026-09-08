@@ -202,7 +202,6 @@ cython_debug/
 # .vscode/
 # Temporary file for partial code execution
 tempCodeRunnerFile.py
-
 # Ruff stuff:
 .ruff_cache/
 
@@ -216,3 +215,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+.vscode
+# MBAutoFarm 运行时生成的任务配置
+source/config/

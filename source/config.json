@@ -1,0 +1,21 @@
+{
+    "tasks": [
+        {
+            "name": "test1",
+            "type": 0,
+            "target": 0
+        },
+        {
+            "name": "test2",
+            "type": 1,
+            "target": 4
+        }
+    ],
+    "gameProcess": "MabinogiMobile.exe",
+    "gameResolution": [
+        1280,
+        960
+    ],
+    "matchThreshold": 0.86,
+    "clickRandomOffset": 15
+}
