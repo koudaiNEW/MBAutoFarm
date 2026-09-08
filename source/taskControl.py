@@ -88,6 +88,7 @@ class taskControl:
         self.taskTarget = None
         self.taskThread_ = None
         self.taskLoopCnt = 0
+        self.taskStartTime = None  # 当前任务开始时间（time.time()）
         self._template_cache = {}
         if configPath:  # 读取配置文件
             self.loadConfig()
@@ -152,6 +153,7 @@ class taskControl:
         self.taskType = taskType
         self.taskTarget = taskTarget
         self.taskRuning = True
+        self.taskStartTime = time.time()
         self.ui.log_printf("INFO", u"启动任务线程: name=%s type=%s target=%s",
                   taskName, taskType, taskTarget)
         self.taskThread_ = threading.Thread(target=self.taskThread, daemon=True)

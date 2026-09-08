@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import (QCoreApplication, QDate, QDateTime, QLocale,
     QMetaObject, QObject, QPoint, QRect,
-    QSize, QTime, QUrl, Qt, Signal)
+    QSize, QTime, QUrl, Qt, Signal, QTimer)
 from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
@@ -118,6 +118,10 @@ class Ui_MBAutoFarmWidget(object):
 
         self.taskStatusLabel = QLabel(self.taskStatusBox)
         self.taskStatusLabel.setObjectName(u"taskStatusLabel")
+        font = QFont()
+        font.setPointSize(9)
+        font.setBold(True)
+        self.taskStatusLabel.setFont(font)
 
         self.gridLayout_2.addWidget(self.taskStatusLabel, 0, 6, 1, 1)
 
@@ -268,6 +272,30 @@ class Ui_MBAutoFarmWidget(object):
         self.collectionTypeChanged(self.collectionTypeComboBox.currentIndex())
         # 启动时读取配置文件，恢复任务列表
         # self.loadConfig()
+        # 任务状态刷新定时器：每秒更新当前任务名称与已执行时间
+        self._taskStatusTimer = QTimer(self.taskLogTextEdit)
+        self._taskStatusTimer.setInterval(1000)
+        self._taskStatusTimer.timeout.connect(self.updateTaskStatus)
+        self.updateTaskStatus()
+
+    def updateTaskStatus(self):
+        """刷新当前运行任务的名称、已执行时间与运行状态标签。"""
+        ctl = self.taskCtl
+        if ctl is not None and ctl.taskRuning and ctl.taskStartTime is not None:
+            self.taskChooseNameLabel.setText(ctl.taskName or u"")
+            elapsed = int(time.time() - ctl.taskStartTime)
+            h, rem = divmod(elapsed, 3600)
+            m, s = divmod(rem, 60)
+            self.taskRuntimeLabel.setText("%02d:%02d:%02d" % (h, m, s))
+            self.taskStatusLabel.setText(u"        运行中        ")
+            self.taskStatusLabel.setStyleSheet(
+                "background-color: green; color: black;")
+        else:
+            self.taskChooseNameLabel.setText(u"无")
+            self.taskRuntimeLabel.setText("00:00:00")
+            self.taskStatusLabel.setText(u"        已停止        ")
+            self.taskStatusLabel.setStyleSheet(
+                "background-color: blue; color: black;")
 
     def collectionTypeChanged(self, index):
         """采集类型变化时，更新 collectionTargetComboBox 的可选项。"""
@@ -355,6 +383,8 @@ class Ui_MBAutoFarmWidget(object):
             self.taskCtl.startTask(self._tasks[row]["name"],
                                    self._tasks[row]["type"],
                                    self._tasks[row]["target"])
+            self._taskStatusTimer.start()
+            self.updateTaskStatus()
         else:
             self.log_printf("ERROR", "task control is not ready.")
 
@@ -362,6 +392,8 @@ class Ui_MBAutoFarmWidget(object):
         self.log_printf("DEBUG", "stop button clicked.")
         if self.taskCtl:
             self.taskCtl.stopTask()
+            self._taskStatusTimer.stop()
+            self.updateTaskStatus()
         else:
             self.log_printf("ERROR", "task control is not ready.")
     

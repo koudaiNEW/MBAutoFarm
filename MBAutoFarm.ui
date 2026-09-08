@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>495</width>
-    <height>592</height>
+    <width>500</width>
+    <height>600</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -87,6 +87,12 @@
       </item>
       <item row="0" column="6">
        <widget class="QLabel" name="taskStatusLabel">
+        <property name="font">
+         <font>
+          <pointsize>9</pointsize>
+          <bold>true</bold>
+         </font>
+        </property>
         <property name="text">
          <string>        已停止        </string>
         </property>
