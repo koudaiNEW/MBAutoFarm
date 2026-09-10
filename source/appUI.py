@@ -23,14 +23,14 @@ class Ui_MBAutoFarmWidget(object):
     # 采集类型 -> 采集目标可选项（顺序与 collectionTypeComboBox 条目一致）
     COLLECTION_TARGETS = [
         [u"巢穴", u"蜘蛛网", u"水", u"水井", u"乳牛", u"苹果树"],
-        [u"树木", u"尖叶树", u"粗壮树", u"成材树", u"甲胃树"],
-        [u"矿脉", u"铁矿脉", u"冰", u"煤炭矿脉", u"铜矿脉", u"白铜矿脉"],
+        [u"树木", u"尖叶树", u"粗壮树", u"成材树", u"甲胃树", u"幽暮树"],
+        [u"矿脉", u"铁矿脉", u"冰", u"煤炭矿脉", u"铜矿脉", u"白铜矿脉", u"银矿脉"],
         [u"药草", u"血红药草", u"箭花", u"魔力药草", u"新芽蘑菇",
-         u"壮壮蘑菇", u"毅力草", u"咻咻蘑菇", u"躲躲花", u"净净蘑菇"],
-        [u"羊", u"卷毛羊"],
-        [u"小麦", u"玉米"],
-        [u"马铃薯", u"洋葱", u"贝类"],
-        [u"光群", u"雪原光群", u"宁静的光群", u"温暖的光群", u"冰冷的光群"],
+         u"壮壮蘑菇", u"毅力草", u"咻咻蘑菇", u"躲躲花", u"净净蘑菇", u"伤痕花", u"增幅蘑菇"],
+        [u"羊", u"卷毛羊", u"乌云羊"],
+        [u"小麦", u"玉米", u"黄豆"],
+        [u"马铃薯", u"洋葱", u"贝类", u"防风草"],
+        [u"光群", u"雪原光群", u"宁静的光群", u"温暖的光群", u"冰冷的光群", u"荒芜的昆虫群"],
         [u"默认"],
     ]
 
@@ -289,13 +289,13 @@ class Ui_MBAutoFarmWidget(object):
             self.taskRuntimeLabel.setText("%02d:%02d:%02d" % (h, m, s))
             self.taskStatusLabel.setText(u"        运行中        ")
             self.taskStatusLabel.setStyleSheet(
-                "background-color: green; color: black;")
+                "background-color: green; color: white;")
         else:
             self.taskChooseNameLabel.setText(u"无")
             self.taskRuntimeLabel.setText("00:00:00")
             self.taskStatusLabel.setText(u"        已停止        ")
             self.taskStatusLabel.setStyleSheet(
-                "background-color: blue; color: black;")
+                "background-color: blue; color: white;")
 
     def collectionTypeChanged(self, index):
         """采集类型变化时，更新 collectionTargetComboBox 的可选项。"""
