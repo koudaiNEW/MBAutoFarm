@@ -3,7 +3,15 @@ name: MBAutoFarm
 
 on:
   push:
+    paths:
+      - "source/**"
+      - "requirements.txt"
+      - ".github/workflows/MBAutoFarm.yml"
   pull_request:
+    paths:
+      - "source/**"
+      - "requirements.txt"
+      - ".github/workflows/MBAutoFarm.yml"
 
 jobs:
   build:
