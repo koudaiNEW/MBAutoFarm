@@ -97,13 +97,21 @@ class taskControl:
         """任务处理主逻辑。"""
         self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
         if not self.setupWindow():
+            self.ui.log_printf("ERROR", u"任务失败：%s, 未找到目标进程", self.taskName)
             return
+        
         while self.taskRuning:
-            self.activateWindow()
-            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
-                self.standardFlow()
-            else:  # 钓鱼任务，进入钓鱼流程（预留）
-                pass
+            try: 
+                self.activateWindow()
+                if self.taskType < 8:  # 非钓鱼任务，进入标准流程
+                    self.standardFlow()
+                    if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
+                        self.crossDayFlow()
+                else:  # 钓鱼任务，进入钓鱼流程（预留）
+                    pass
+            except Exception as e:
+                self.ui.log_printf("ERROR", u"任务失败：%s, %s", self.taskName, e)
+                self.ui.log_printf("INFO", u"重启任务：%s", self.taskName)
         self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
 
     def loadConfig(self):
@@ -144,6 +152,7 @@ class taskControl:
         }
         with open(self.configPath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+        self.ui.log_printf("INFO", u"已保存配置文件：%s", self.configPath)
 
     def startTask(self, taskName, taskType, taskTarget):
         if self.taskRuning:  # 正在运行任务，不允许启动新的任务
@@ -359,22 +368,6 @@ class taskControl:
             time.sleep(interval)
 
 
-    def taskThread(self):
-        """任务处理主逻辑。"""
-        self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
-        if not self.setupWindow():
-            self.ui.log_printf("ERROR", u"任务失败：%s, 未找到目标进程", self.taskName)
-            return
-        while self.taskRuning:
-            self.activateWindow()
-            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
-                self.standardFlow()
-                if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
-                    self.crossDayFlow()
-            else:  # 钓鱼任务，进入钓鱼流程（预留）
-                pass
-        self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
-        
     def standardFlow(self):
         self.ui.log_printf("INFO", u"单轮采集开始")
         # 确认为当前为主界面
@@ -549,9 +542,10 @@ class taskControl:
         # 往上拖动地图并查找提尔克那
         for i in range(10):
             self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
-            time.sleep(0.2)
-            pos = self.findImage(os.path.join("mapTier.png"), 0.7)
+            time.sleep(0.6)
+            pos = self.findImage(os.path.join("mapTier.png"), 0.6)
             if pos is not None:
+                pos = (pos[0], pos[1] - 15)
                 self.clickPos(pos)
                 break
             time.sleep(0.3)
@@ -596,14 +590,14 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
                 return
         # 按下空格跳过对话
-        time.sleep(1)
+        time.sleep(2)
         self.pressKey("space")
-        time.sleep(1)
+        time.sleep(2)
         # 点击全部修理
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            pos = self.findImage(os.path.join("fixAllKey.png"))
+            pos = self.findImage(os.path.join("fixAllKey.png"), 0.7)
             if pos is not None:
                 self.clickPos(pos)
                 break
@@ -611,19 +605,19 @@ class taskControl:
             if i == 5:
                 self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 按下空格确认
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("fixKey.png")):
+            if self.findImage(os.path.join("fixKey.png"), 0.7):
                 self.pressKey("space")
                 break
             time.sleep(0.6)
             if i == 5:
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                self.ui.log_printf("ERROR", u"未找到修复图标")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 跳过对话
         for i in range(6): 
             if self.taskRuning is False:
@@ -633,9 +627,9 @@ class taskControl:
                 break
             time.sleep(0.5)
             if i == 5:
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                self.ui.log_printf("ERROR", u"未找到跳过对话图标")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 结束对话
         for i in range(6): 
             if self.taskRuning is False:
@@ -649,7 +643,7 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
                 return
         # 按下空格跳过对话
-        time.sleep(1.5)
+        time.sleep(2.0)
         self.pressKey("space")
         time.sleep(1)
         self.ui.log_printf("INFO", u"工具修复流程结束")
