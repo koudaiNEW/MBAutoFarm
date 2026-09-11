@@ -2,8 +2,8 @@
     "tasks": [
         {
             "name": "test1",
-            "type": 7,
-            "target": 4
+            "type": 0,
+            "target": 0
         },
         {
             "name": "test2",

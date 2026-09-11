@@ -549,9 +549,10 @@ class taskControl:
         # 往上拖动地图并查找提尔克那
         for i in range(10):
             self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
-            time.sleep(0.2)
-            pos = self.findImage(os.path.join("mapTier.png"), 0.7)
+            time.sleep(0.6)
+            pos = self.findImage(os.path.join("mapTier.png"), 0.6)
             if pos is not None:
+                pos = (pos[0], pos[1] - 15)
                 self.clickPos(pos)
                 break
             time.sleep(0.3)
@@ -596,14 +597,14 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
                 return
         # 按下空格跳过对话
-        time.sleep(1)
+        time.sleep(2)
         self.pressKey("space")
-        time.sleep(1)
+        time.sleep(2)
         # 点击全部修理
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            pos = self.findImage(os.path.join("fixAllKey.png"))
+            pos = self.findImage(os.path.join("fixAllKey.png"), 0.7)
             if pos is not None:
                 self.clickPos(pos)
                 break
@@ -611,19 +612,19 @@ class taskControl:
             if i == 5:
                 self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 按下空格确认
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("fixKey.png")):
+            if self.findImage(os.path.join("fixKey.png"), 0.7):
                 self.pressKey("space")
                 break
             time.sleep(0.6)
             if i == 5:
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                self.ui.log_printf("ERROR", u"未找到修复图标")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 跳过对话
         for i in range(6): 
             if self.taskRuning is False:
@@ -633,9 +634,9 @@ class taskControl:
                 break
             time.sleep(0.5)
             if i == 5:
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                self.ui.log_printf("ERROR", u"未找到跳过对话图标")
                 return
-        time.sleep(1.0)
+        time.sleep(2.0)
         # 结束对话
         for i in range(6): 
             if self.taskRuning is False:
@@ -649,7 +650,7 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
                 return
         # 按下空格跳过对话
-        time.sleep(1.5)
+        time.sleep(2.0)
         self.pressKey("space")
         time.sleep(1)
         self.ui.log_printf("INFO", u"工具修复流程结束")
