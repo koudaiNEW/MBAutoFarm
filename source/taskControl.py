@@ -97,13 +97,21 @@ class taskControl:
         """任务处理主逻辑。"""
         self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
         if not self.setupWindow():
+            self.ui.log_printf("ERROR", u"任务失败：%s, 未找到目标进程", self.taskName)
             return
+        
         while self.taskRuning:
-            self.activateWindow()
-            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
-                self.standardFlow()
-            else:  # 钓鱼任务，进入钓鱼流程（预留）
-                pass
+            try: 
+                self.activateWindow()
+                if self.taskType < 8:  # 非钓鱼任务，进入标准流程
+                    self.standardFlow()
+                    if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
+                        self.crossDayFlow()
+                else:  # 钓鱼任务，进入钓鱼流程（预留）
+                    pass
+            except Exception as e:
+                self.ui.log_printf("ERROR", u"任务失败：%s, %s", self.taskName, e)
+                self.ui.log_printf("INFO", u"重启任务：%s", self.taskName)
         self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
 
     def loadConfig(self):
@@ -144,6 +152,7 @@ class taskControl:
         }
         with open(self.configPath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+        self.ui.log_printf("INFO", u"已保存配置文件：%s", self.configPath)
 
     def startTask(self, taskName, taskType, taskTarget):
         if self.taskRuning:  # 正在运行任务，不允许启动新的任务
@@ -359,22 +368,6 @@ class taskControl:
             time.sleep(interval)
 
 
-    def taskThread(self):
-        """任务处理主逻辑。"""
-        self.ui.log_printf("INFO", u"开始执行任务：%s", self.taskName)
-        if not self.setupWindow():
-            self.ui.log_printf("ERROR", u"任务失败：%s, 未找到目标进程", self.taskName)
-            return
-        while self.taskRuning:
-            self.activateWindow()
-            if self.taskType < 8:  # 非钓鱼任务，进入标准流程
-                self.standardFlow()
-                if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
-                    self.crossDayFlow()
-            else:  # 钓鱼任务，进入钓鱼流程（预留）
-                pass
-        self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
-        
     def standardFlow(self):
         self.ui.log_printf("INFO", u"单轮采集开始")
         # 确认为当前为主界面
