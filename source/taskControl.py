@@ -305,6 +305,49 @@ class taskControl:
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
         time.sleep(0.15)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+        
+    def cursorSliding(self, pos, direction, distance=None, steps=20, duration=0.4):
+        """按住左键从 pos 沿 direction 拖动 distance 像素（配置坐标系）。
+
+        按住期间用 SetCursorPos 分 steps 步插值移动（绝对定位，不受指针加速
+        影响），终点限制在客户区内，全程耗时约 duration 秒。
+        """
+        self.ensureForeground()
+        origin, size = self.clientGeometry()
+        x0 = origin[0] + int(pos[0] * size[0] / self.configResolution[0])
+        y0 = origin[1] + int(pos[1] * size[1] / self.configResolution[1])
+        x0 += random.randint(-self.configClickRandomOffset, self.configClickRandomOffset)
+        y0 += random.randint(-self.configClickRandomOffset, self.configClickRandomOffset)
+        if distance is None:
+            distance = (self.configResolution[1] if direction in ("up", "down")
+                        else self.configResolution[0]) // 2
+        if direction == "up":
+            dx, dy = 0, -distance
+        elif direction == "down":
+            dx, dy = 0, distance
+        elif direction == "left":
+            dx, dy = -distance, 0
+        elif direction == "right":
+            dx, dy = distance, 0
+        else:
+            self.ui.log_printf("ERROR", u"未知拖动方向: %s", direction)
+            return
+        dx = int(dx * size[0] / self.configResolution[0])
+        dy = int(dy * size[1] / self.configResolution[1])
+        x1 = min(max(x0 + dx, origin[0]), origin[0] + size[0] - 1)
+        y1 = min(max(y0 + dy, origin[1]), origin[1] + size[1] - 1)
+        self.ui.log_printf("DEBUG", u"拖动 (%d, %d) -> (%d, %d)",
+                           x0, y0, x1, y1)
+        win32api.SetCursorPos((x0, y0))
+        time.sleep(0.06)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0)
+        time.sleep(0.15)
+        for i in range(1, steps + 1):
+            win32api.SetCursorPos((x0 + (x1 - x0) * i // steps,
+                                   y0 + (y1 - y0) * i // steps))
+            time.sleep(duration / steps)
+        win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
+
 
     def scrollDown(self, times=1, interval=0.05):
         """输入鼠标滚轮向下滚动 times 次。"""
@@ -502,17 +545,17 @@ class taskControl:
         # 移动光标并缩小地图
         self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
         self.scrollDown(10)
-        time.sleep(0.2)
-        # 点击提尔克那
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("mapTier.png"))
+        time.sleep(0.5)
+        # 往上拖动地图并查找提尔克那
+        for i in range(10):
+            self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
+            time.sleep(0.2)
+            pos = self.findImage(os.path.join("mapTier.png"), 0.7)
             if pos is not None:
                 self.clickPos(pos)
                 break
-            time.sleep(0.5)
-            if i == 5:
+            time.sleep(0.3)
+            if i == 9:
                 self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
                 return
         time.sleep(1.0)
@@ -585,7 +628,7 @@ class taskControl:
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("fixToolOut.png")):
+            if self.findImage(os.path.join("fixToolOut.png"), 0.7):
                 self.pressKey("esc")
                 break
             time.sleep(0.5)
@@ -597,7 +640,7 @@ class taskControl:
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            pos = self.findImage(os.path.join("endTalkKey.png"))
+            pos = self.findImage(os.path.join("endTalkKey.png"), 0.7)
             if pos is not None:
                 self.clickPos(pos)
                 break
@@ -730,7 +773,7 @@ class taskControl:
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("stellaPickMark.png")):
+            if self.findImage(os.path.join("stellaPickMark.png"), 0.7):
                 self.pressKey("esc")
                 break
             time.sleep(0.5)
