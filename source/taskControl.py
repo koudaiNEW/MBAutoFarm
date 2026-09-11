@@ -235,7 +235,7 @@ class taskControl:
         origin = win32gui.ClientToScreen(self.hwnd, (left, top))
         return origin, (right - left, bottom - top)
 
-    def findImage(self, rel_path):
+    def findImage(self, rel_path, matchingDegree = 0.0):
         """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。"""
         template = self.loadTemplate(rel_path)
         shot = self.captureGame() if template is not None else None
@@ -243,7 +243,10 @@ class taskControl:
             return None
         result = cv2.matchTemplate(shot, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if max_val < self.configMatchThreshold:
+        if matchingDegree > 0.0:
+            if max_val < matchingDegree:
+                return None
+        elif max_val < self.configMatchThreshold:
             return None
         h, w = template.shape[:2]
         pos = (max_loc[0] + w // 2, max_loc[1] + h // 2)
@@ -487,7 +490,7 @@ class taskControl:
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            pos = self.findImage(os.path.join("mapOula.png"))
+            pos = self.findImage(os.path.join("mapOula.png"), 0.7)
             if pos is not None:
                 self.clickPos(pos)
                 break
@@ -709,13 +712,14 @@ class taskControl:
                 break
             time.sleep(0.5)
             if i == 5:
-                self.ui.log_printf()
+                self.ui.log_printf("ERROR", u"未找到跳过出席簿图标")
         time.sleep(2.0)
         # 点击确认
         for i in range(6): 
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("organizeConfirm.png")):
+            if self.findImage(os.path.join("crossDay3.png")):
+                time.sleep(1.0)
                 self.pressKey("space")
                 break
             time.sleep(0.5)
