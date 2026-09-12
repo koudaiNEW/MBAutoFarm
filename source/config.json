@@ -2,13 +2,17 @@
     "tasks": [
         {
             "name": "test1",
-            "type": 4,
-            "target": 1
+            "type": 5,
+            "target": 2,
+            "backpackClean": true,
+            "fixTool": true
         },
         {
             "name": "test2",
             "type": 1,
-            "target": 4
+            "target": 4,
+            "backpackClean": false,
+            "fixTool": false
         }
     ],
     "gameProcess": "MabinogiMobile.exe",
