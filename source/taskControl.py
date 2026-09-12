@@ -105,7 +105,7 @@ class taskControl:
                 self.activateWindow()
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardFlow()
-                    if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
+                    if self.findImage(os.path.join("crossDay1.png"), 0.8) or self.findImage(os.path.join("crossDay1_1.png"), 0.8): # 检查是否存在签到
                         self.crossDayFlow()
                 else:  # 钓鱼任务，进入钓鱼流程（预留）
                     pass
