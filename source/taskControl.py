@@ -103,12 +103,15 @@ class taskControl:
         while self.taskRuning:
             try: 
                 self.activateWindow()
+                if self.findImage(os.path.join("crossDay1.png"), 0.8) or self.findImage(os.path.join("crossDay1_1.png"), 0.8): # 检查是否存在签到
+                    self.crossDayFlow()
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardFlow()
-                    if self.findImage(os.path.join("crossDay1.png")): # 检查是否存在签到
-                        self.crossDayFlow()
-                else:  # 钓鱼任务，进入钓鱼流程（预留）
-                    pass
+                else:  # 钓鱼任务，进入钓鱼流程
+                    # self.fishingFlow()
+                    self.ui.log_printf("ERROR", u"钓鱼功能暂时未开发完成")
+                    self.taskRuning = False
+                    break
             except Exception as e:
                 self.ui.log_printf("ERROR", u"任务失败：%s, %s", self.taskName, e)
                 self.ui.log_printf("INFO", u"重启任务：%s", self.taskName)
@@ -154,17 +157,18 @@ class taskControl:
             json.dump(data, f, ensure_ascii=False, indent=4)
         self.ui.log_printf("INFO", u"已保存配置文件：%s", self.configPath)
 
-    def startTask(self, taskName, taskType, taskTarget):
+    def startTask(self, injectionTask):
         if self.taskRuning:  # 正在运行任务，不允许启动新的任务
             self.ui.log_printf("ERROR", u"任务已启动，请勿重复启动")
             return
-        self.taskName = taskName
-        self.taskType = taskType
-        self.taskTarget = taskTarget
+        self.taskName = injectionTask['name']
+        self.taskType = injectionTask['type']
+        self.taskTarget = injectionTask['target']
+        self.taskBackpackClean = injectionTask['backpackClean']
+        self.taskFixTool = injectionTask['fixTool']
         self.taskRuning = True
         self.taskStartTime = time.time()
-        self.ui.log_printf("INFO", u"启动任务线程: name=%s type=%s target=%s",
-                  taskName, taskType, taskTarget)
+        self.ui.log_printf("INFO", u"启动任务线程: name=%s", self.taskName)
         self.taskThread_ = threading.Thread(target=self.taskThread, daemon=True)
         self.taskThread_.start()
 
@@ -471,6 +475,10 @@ class taskControl:
             if self.taskRuning is False:
                 return
             if self.findImage(os.path.join("fixToolMark.png")):
+                if self.taskFixTool == False:
+                    self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用采集工具")
+                    self.taskRuning = False
+                    return
                 self.fixToolFlow()
                 return
             time.sleep(0.5)
@@ -487,14 +495,15 @@ class taskControl:
             else:
                 workDoneCnt = 0
             time.sleep(0.9)
-            # if i == 599:
-            #     self.ui.log_printf("ERROR", u"采集超时")
-            #     return
+            if i == 599:
+                self.ui.log_printf("ERROR", u"采集超时")
+                return
         # 整理背包
-        self.taskLoopCnt += 1
-        if self.taskLoopCnt > 4 :
-            self.taskLoopCnt = 0
-            self.packBackpackFlow()
+        if self.taskBackpackClean == True:
+            self.taskLoopCnt += 1
+            if self.taskLoopCnt > 4 :
+                self.taskLoopCnt = 0
+                self.packBackpackFlow()
         self.ui.log_printf("INFO", u"单轮采集完成")
 
     def fixToolFlow(self):
@@ -675,6 +684,17 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"从背包进入整理失败")
                 return
         time.sleep(1.0)
+        # 检查大胆整理关闭
+        for i in range(3): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("organizeBold.png"))
+            if pos is not None:
+                self.ui.log_printf("INFO", u"关闭大胆整理")
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+        time.sleep(1.0)
         # 检查是否需要整理
         for i in range(6): 
             if self.taskRuning is False:
@@ -774,3 +794,122 @@ class taskControl:
             if i == 5:
                 self.ui.log_printf("ERROR", u"未找到退出图标")
                 return
+
+    def fishingFlow(self):
+        if self.taskTarget == 6:
+            self.fishingDFFlow()
+        else:
+            self.fishingSTDFlow()
+            
+    def fishingDFFlow(self):
+        pass
+    
+    def fishingSTDFlow(self):
+        # 确认为当前为主界面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
+                break
+            self.pressKey("esc")
+            time.sleep(1.0)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 返回失败")
+                return
+        # 按下C进入人物界面
+        time.sleep(1.0)
+        self.pressKey('c')
+        time.sleep(1.0)
+        # 点击live图标进入生活技能界面
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("liveSkill1.png"))
+            if pos:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 点击生活技能图标
+        type_path = os.path.join("taskType", "%d.png" % self.taskType)
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(type_path)
+            if pos:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
+                return
+        time.sleep(1.0)
+        # 移动光标到采集物列表
+        list_path = os.path.join("taskType", str(self.taskType), "listCheck.png")
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(list_path)
+            if pos:
+                self.moveCursor(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
+                return
+        time.sleep(0.5)
+        # 点击目标采集物
+        target_path = os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget)
+        if self.taskTarget < 4:
+            for i in range(6):
+                if self.taskRuning is False:
+                    return
+                pos = self.findImage(target_path)
+                if pos:
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                    return
+        else:
+            for i in range(12):
+                if self.taskRuning is False:
+                    return
+                self.scrollDown(3)
+                time.sleep(0.2)
+                pos = self.findImage(target_path)
+                if pos:
+                    self.clickPos(pos)
+                    break
+                if i == 11:
+                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                    return
+        time.sleep(1.0)
+        # 点击采集
+        for i in range(6):
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("gotoCollection.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
+        time.sleep(1.0)
+        # 检查是否需要维修工具
+        for i in range(4):
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("fixToolMark.png")):
+                if self.taskFixTool == False:
+                    self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用采集工具")
+                    self.taskRuning = False
+                    return
+                self.fixToolFlow()
+                return
+            time.sleep(0.5)

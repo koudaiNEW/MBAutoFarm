@@ -7,7 +7,7 @@ from PySide6.QtGui import (QBrush, QColor, QConicalGradient, QCursor,
     QFont, QFontDatabase, QGradient, QIcon,
     QImage, QKeySequence, QLinearGradient, QPainter,
     QPalette, QPixmap, QRadialGradient, QTransform)
-from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QGroupBox,
+from PySide6.QtWidgets import (QApplication, QComboBox, QGridLayout, QGroupBox, QCheckBox,
     QLabel, QListWidget, QListWidgetItem, QPushButton,
     QSizePolicy, QSpacerItem, QTextEdit, QWidget)
 import threading
@@ -31,7 +31,7 @@ class Ui_MBAutoFarmWidget(object):
         [u"小麦", u"玉米", u"黄豆"],
         [u"马铃薯", u"洋葱", u"贝类", u"防风草"],
         [u"光群", u"雪原光群", u"昆虫群", u"宁静的光群", u"温暖的光群", u"冰冷的光群", u"荒芜的昆虫群"],
-        [u"默认"],
+        [u"小钓鱼场", u"南侧城墙钓鱼场", u"东侧城墙钓鱼场", u"海滨钓鱼场", u"旧钓鱼场", u"河口钓鱼场", u"默认"],
     ]
 
     LOG_COLORS = {
@@ -64,7 +64,7 @@ class Ui_MBAutoFarmWidget(object):
     def setupUi(self, MBAutoFarmWidget):
         if not MBAutoFarmWidget.objectName():
             MBAutoFarmWidget.setObjectName(u"MBAutoFarmWidget")
-        MBAutoFarmWidget.resize(500, 600)
+        MBAutoFarmWidget.resize(600, 600)
         self.gridLayout = QGridLayout(MBAutoFarmWidget)
         self.gridLayout.setObjectName(u"gridLayout")
         self.taskLogBox = QGroupBox(MBAutoFarmWidget)
@@ -168,6 +168,24 @@ class Ui_MBAutoFarmWidget(object):
         self.taskConfigBox.setObjectName(u"taskConfigBox")
         self.gridLayout_4 = QGridLayout(self.taskConfigBox)
         self.gridLayout_4.setObjectName(u"gridLayout_4")
+        self.horizontalSpacer_3 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+
+        self.gridLayout_4.addItem(self.horizontalSpacer_3, 0, 3, 1, 1)
+
+        self.taskConfigSaveButton = QPushButton(self.taskConfigBox)
+        self.taskConfigSaveButton.setObjectName(u"taskConfigSaveButton")
+
+        self.gridLayout_4.addWidget(self.taskConfigSaveButton, 3, 1, 1, 1)
+
+        self.collectionTargetComboBox = QComboBox(self.taskConfigBox)
+        self.collectionTargetComboBox.setObjectName(u"collectionTargetComboBox")
+
+        self.gridLayout_4.addWidget(self.collectionTargetComboBox, 1, 1, 1, 1)
+
+        self.verticalSpacer_2 = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+
+        self.gridLayout_4.addItem(self.verticalSpacer_2, 2, 0, 2, 1)
+
         self.collectionTypeComboBox = QComboBox(self.taskConfigBox)
         self.collectionTypeComboBox.addItem("")
         self.collectionTypeComboBox.addItem("")
@@ -188,29 +206,21 @@ class Ui_MBAutoFarmWidget(object):
 
         self.gridLayout_4.addWidget(self.collectionTargetTitleLabel, 1, 0, 1, 1)
 
-        self.horizontalSpacer_3 = QSpacerItem(40, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
-
-        self.gridLayout_4.addItem(self.horizontalSpacer_3, 0, 2, 1, 1)
-
-        self.collectionTargetComboBox = QComboBox(self.taskConfigBox)
-        self.collectionTargetComboBox.setObjectName(u"collectionTargetComboBox")
-
-        self.gridLayout_4.addWidget(self.collectionTargetComboBox, 1, 1, 1, 1)
-
         self.collectionTypeTitleLabel = QLabel(self.taskConfigBox)
         self.collectionTypeTitleLabel.setObjectName(u"collectionTypeTitleLabel")
         self.collectionTypeTitleLabel.setAlignment(Qt.AlignmentFlag.AlignRight|Qt.AlignmentFlag.AlignTrailing|Qt.AlignmentFlag.AlignVCenter)
 
         self.gridLayout_4.addWidget(self.collectionTypeTitleLabel, 0, 0, 1, 1)
 
-        self.verticalSpacer_2 = QSpacerItem(20, 40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        self.backpackCleanCheckBox = QCheckBox(self.taskConfigBox)
+        self.backpackCleanCheckBox.setObjectName(u"backpackCleanCheckBox")
 
-        self.gridLayout_4.addItem(self.verticalSpacer_2, 2, 0, 2, 1)
+        self.gridLayout_4.addWidget(self.backpackCleanCheckBox, 0, 2, 1, 1)
 
-        self.taskConfigSaveButton = QPushButton(self.taskConfigBox)
-        self.taskConfigSaveButton.setObjectName(u"taskConfigSaveButton")
+        self.fixToolCheckBox = QCheckBox(self.taskConfigBox)
+        self.fixToolCheckBox.setObjectName(u"fixToolCheckBox")
 
-        self.gridLayout_4.addWidget(self.taskConfigSaveButton, 3, 1, 1, 1)
+        self.gridLayout_4.addWidget(self.fixToolCheckBox, 1, 2, 1, 1)
 
 
         self.gridLayout.addWidget(self.taskConfigBox, 1, 1, 1, 1)
@@ -224,7 +234,8 @@ class Ui_MBAutoFarmWidget(object):
         self.retranslateUi(MBAutoFarmWidget)
 
         QMetaObject.connectSlotsByName(MBAutoFarmWidget)
-
+        
+        # 以上粘贴
         self.configSetup()
     # setupUi
 
@@ -243,6 +254,7 @@ class Ui_MBAutoFarmWidget(object):
         self.taskStartButton.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u5f00\u59cb", None))
         self.taskRuntimeTitleLabel.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u6267\u884c\u65f6\u95f4:", None))
         self.taskConfigBox.setTitle(QCoreApplication.translate("MBAutoFarmWidget", u"\u4efb\u52a1\u914d\u7f6e", None))
+        self.taskConfigSaveButton.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u4fdd\u5b58", None))
         self.collectionTypeComboBox.setItemText(0, QCoreApplication.translate("MBAutoFarmWidget", u"\u65e5\u5e38\u91c7\u96c6", None))
         self.collectionTypeComboBox.setItemText(1, QCoreApplication.translate("MBAutoFarmWidget", u"\u4f10\u6728", None))
         self.collectionTypeComboBox.setItemText(2, QCoreApplication.translate("MBAutoFarmWidget", u"\u91c7\u77ff", None))
@@ -255,7 +267,8 @@ class Ui_MBAutoFarmWidget(object):
 
         self.collectionTargetTitleLabel.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u91c7\u96c6\u76ee\u6807:", None))
         self.collectionTypeTitleLabel.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u91c7\u96c6\u7c7b\u578b:", None))
-        self.taskConfigSaveButton.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u4fdd\u5b58", None))
+        self.backpackCleanCheckBox.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u6574\u7406\u80cc\u5305", None))
+        self.fixToolCheckBox.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u7ef4\u4fee\u5de5\u5177", None))
     # retranslateUi
 
     def configSetup(self):
@@ -268,6 +281,8 @@ class Ui_MBAutoFarmWidget(object):
         self.collectionTargetComboBox.currentIndexChanged.connect(self.collectionTargetChanged)
         self.taskListWidget.currentRowChanged.connect(self.taskSelected)
         self.taskListWidget.itemChanged.connect(self.taskItemRenamed)
+        self.backpackCleanCheckBox.stateChanged.connect(self.backpackCleanCheckBoxChanged)
+        self.fixToolCheckBox.stateChanged.connect(self.fixToolCheckBoxChanged)
         # 初始化采集目标下拉框，与当前采集类型保持一致
         self.collectionTypeChanged(self.collectionTypeComboBox.currentIndex())
         # 启动时读取配置文件，恢复任务列表
@@ -325,6 +340,8 @@ class Ui_MBAutoFarmWidget(object):
         try:
             self.collectionTypeComboBox.setCurrentIndex(task["type"])
             self.collectionTargetComboBox.setCurrentIndex(task["target"])
+            self.backpackCleanCheckBox.setChecked(task["backpackClean"])
+            self.fixToolCheckBox.setChecked(task["fixTool"])
         finally:
             self._updating_ui = False
 
@@ -337,7 +354,8 @@ class Ui_MBAutoFarmWidget(object):
     def _addTaskItem(self, name, type_index=0, target_index=0):
         """向数据模型和 taskListWidget 添加一条任务。"""
         self._tasks.append({"name": name, "type": type_index,
-                            "target": target_index})
+                            "target": target_index, "backpackClean": True,
+                            "fixTool": True})
         item = QListWidgetItem(name)
         # 允许双击编辑重命名
         item.setFlags(item.flags() | Qt.ItemIsEditable)
@@ -380,9 +398,7 @@ class Ui_MBAutoFarmWidget(object):
             if not (0 <= row < len(self._tasks)):
                 self.log_printf("WARNING", "please select a task first.")
                 return
-            self.taskCtl.startTask(self._tasks[row]["name"],
-                                   self._tasks[row]["type"],
-                                   self._tasks[row]["target"])
+            self.taskCtl.startTask(self._tasks[row])
             self._taskStatusTimer.start()
             self.updateTaskStatus()
         else:
@@ -420,4 +436,14 @@ class Ui_MBAutoFarmWidget(object):
         if self.taskCtl.saveConfig():
             self.log_printf("INFO", u"保存成功，配置已写入 config.json")
     
-    
+    def backpackCleanCheckBoxChanged(self, checked):
+        row = self.taskListWidget.currentRow()
+        if 0 <= row < len(self._tasks):
+            self._tasks[row]["backpackClean"] = True if checked else False
+            
+    def fixToolCheckBoxChanged(self, checked):
+        row = self.taskListWidget.currentRow()
+        if 0 <= row < len(self._tasks):
+            self._tasks[row]["fixTool"] = True if checked else False
+            
+            

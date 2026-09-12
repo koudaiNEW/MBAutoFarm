@@ -219,3 +219,4 @@ __marimo__/
 .vscode
 # MBAutoFarm 运行时生成的任务配置
 source/config.json
+MBAutoFarm_ui.py
