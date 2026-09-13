@@ -44,8 +44,9 @@ class Ui_MBAutoFarmWidget(object):
     class _LogEmitter(QObject):
         logMessage = Signal(str)
 
-    def __init__(self, configPath=None):
+    def __init__(self, configPath=None, appVersion=None):
         self.configPath = configPath
+        self.appVersion = appVersion
         self._log_emitter = self._LogEmitter()
         self._log_lock = threading.Lock()
         self._log_connected = False
@@ -240,7 +241,7 @@ class Ui_MBAutoFarmWidget(object):
     # setupUi
 
     def retranslateUi(self, MBAutoFarmWidget):
-        MBAutoFarmWidget.setWindowTitle(QCoreApplication.translate("MBAutoFarmWidget", u"MBAutoFarm", None))
+        MBAutoFarmWidget.setWindowTitle(QCoreApplication.translate("MBAutoFarmWidget", u"MBAutoFarm v" + self.appVersion, None))
         self.taskLogBox.setTitle(QCoreApplication.translate("MBAutoFarmWidget", u"\u65e5\u5fd7", None))
         self.taskListBox.setTitle(QCoreApplication.translate("MBAutoFarmWidget", u"\u4efb\u52a1\u5217\u8868", None))
         self.taskListAddButton.setText(QCoreApplication.translate("MBAutoFarmWidget", u"\u6dfb\u52a0", None))

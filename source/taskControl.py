@@ -103,7 +103,7 @@ class taskControl:
         while self.taskRuning:
             try: 
                 self.activateWindow()
-                if self.findImage(os.path.join("crossDay1.png"), 0.8) or self.findImage(os.path.join("crossDay1_1.png"), 0.8): # 检查是否存在签到
+                if self.findImage(os.path.join("crossDay1.png")) : # 检查是否存在签到
                     self.crossDayFlow()
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardFlow()
@@ -756,9 +756,18 @@ class taskControl:
         self.ui.log_printf("INFO", u"整理背包流程结束")
         
     def crossDayFlow(self):
-        # 光标点击画面中心
-        self.clickPos((self.configResolution[0] // 2, self.configResolution[1] // 2))
-        time.sleep(2.0)
+        # 光标点击画面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay1.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到每日界面标志")
+        time.sleep(3.0)
         # 点击跳过出席簿
         for i in range(6): 
             if self.taskRuning is False:
