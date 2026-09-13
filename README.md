@@ -27,7 +27,10 @@ pip install -r requirements.txt
 ```
 
 ## 使用方法
-
+- 安装包运行：
+1. [点击此处](https://github.com/koudaiNEW/MBAutoFarm/releases)下载最新包体.
+2. 解压后双击MBAutoFarm.exe运行.
+- 源码运行：
 ```bash
 cd source
 python MBAutoFarm.py
