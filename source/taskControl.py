@@ -875,6 +875,7 @@ class taskControl:
                 return
             pos = self.findImage(os.path.join("crossDay1.png"))
             if pos is not None:
+                pos = (pos[0], pos[1] + 60)
                 self.clickPos(pos)
                 time.sleep(3.0)
                 break
