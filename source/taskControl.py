@@ -104,7 +104,7 @@ class taskControl:
         while self.taskRuning:
             try: 
                 self.activateWindow()
-                if self.findImage(os.path.join("crossDay1.png")) : # 检查是否存在签到
+                if self.findImage(os.path.join("crossDay1.png")) or self.findImage(os.path.join("crossDay1_1.png")) : # 检查是否存在签到
                     self.crossDayFlow()
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardFlow()
@@ -821,11 +821,22 @@ class taskControl:
             pos = self.findImage(os.path.join("crossDay1.png"))
             if pos is not None:
                 self.clickPos(pos)
+                time.sleep(3.0)
                 break
             time.sleep(0.5)
             if i == 5:
-                self.ui.log_printf("ERROR", u"未找到每日界面标志")
-        time.sleep(3.0)
+                self.ui.log_printf("ERROR", u"未找到每日界面标志1")
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay1_1.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                time.sleep(3.0)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到每日界面标志2")
         # 点击跳过出席簿
         for i in range(6): 
             if self.taskRuning is False:
@@ -851,16 +862,7 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到确认图标")
         time.sleep(5.0)
         # 退出SP界面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("stellaPickMark.png"), 0.7):
-                self.pressKey("esc")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到退出图标")
-                return
+        self.pressKey("esc")
 
     def fishingFlow(self):
         if self.taskTarget == 6:
@@ -1012,9 +1014,15 @@ class taskControl:
 
 
     def inFishState(self):
+        moveState = False
         packBackpackCleanCnt = 0
         while self.taskRuning:
-            self.pressKey('w', 0.05) 
+            if moveState is False:
+                self.pressKey('w', 0.05) 
+                moveState = True
+            else:
+                self.pressKey('s', 0.05) 
+                moveState = False
             time.sleep(0.1)
             for i in range(6):
                 if self.taskRuning is False:
