@@ -90,6 +90,8 @@ class taskControl:
         self.taskLoopCnt = 0
         self.taskStartTime = None  # 当前任务开始时间（time.time()）
         self._template_cache = {}
+        self._greenPixelRange = None  # greenMark.png 绿色判定阈值 (gbMin, grMin, gMin)
+        self.taskFixFailCnt = 0
         if configPath:  # 读取配置文件
             self.loadConfig()
 
@@ -103,15 +105,12 @@ class taskControl:
         while self.taskRuning:
             try: 
                 self.activateWindow()
-                if self.findImage(os.path.join("crossDay1.png"), 0.8) or self.findImage(os.path.join("crossDay1_1.png"), 0.8): # 检查是否存在签到
+                if self.findImage(os.path.join("crossDay1.png")) or self.findImage(os.path.join("crossDay1_1.png")) or self.findImage(os.path.join("crossDay1_2.png")) : # 检查是否存在签到
                     self.crossDayFlow()
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardFlow()
                 else:  # 钓鱼任务，进入钓鱼流程
-                    # self.fishingFlow()
-                    self.ui.log_printf("ERROR", u"钓鱼功能暂时未开发完成")
-                    self.taskRuning = False
-                    break
+                    self.fishingFlow()
             except Exception as e:
                 self.ui.log_printf("ERROR", u"任务失败：%s, %s", self.taskName, e)
                 self.ui.log_printf("INFO", u"重启任务：%s", self.taskName)
@@ -248,7 +247,7 @@ class taskControl:
         origin = win32gui.ClientToScreen(self.hwnd, (left, top))
         return origin, (right - left, bottom - top)
 
-    def findImage(self, rel_path, matchingDegree = 0.0):
+    def findImage(self, rel_path, matchingDegree = 0.0, logging=True):
         """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。"""
         template = self.loadTemplate(rel_path)
         shot = self.captureGame() if template is not None else None
@@ -263,7 +262,8 @@ class taskControl:
             return None
         h, w = template.shape[:2]
         pos = (max_loc[0] + w // 2, max_loc[1] + h // 2)
-        self.ui.log_printf("INFO", u"匹配到 %s 相似度=%.2f 位置=%s", rel_path, max_val, str(pos))
+        if logging:
+            self.ui.log_printf("INFO", u"匹配到 %s 相似度=%.2f 位置=%s", rel_path, max_val, str(pos))
         return pos
     
     def waitImage(self, rel_path, timeout=None, interval=0.2):
@@ -279,7 +279,66 @@ class taskControl:
             time.sleep(interval)
         return None
 
-    def pressKey(self, key):
+    def countGreenPixels(self, rect=(570, 370, 710, 450)):
+        """统计指定区域内的绿色像素数，rect 为配置分辨率坐标系下的
+        (x1, y1, x2, y2)，默认为钓鱼进度条区域 X:570-700, Y:403-435。
+
+        绿色判定以 sample/fishing/greenMark.png 为参考：取参考像素 G 通道
+        相对 B/R 的最小优势差值和 G 最小值，减容差后作为阈值，要求 G 显著
+        高于 B 和 R（避免水面等蓝绿色被误判），截图失败返回 0。
+        """
+        if self._greenPixelRange is None:
+            mark = self.loadTemplate(os.path.join("fishing", "greenMark.png"))
+            if mark is None:
+                return 0
+            px = mark.reshape(-1, 3).astype(np.int16)
+            b, g, r = px[:, 0], px[:, 1], px[:, 2]
+            tol = 60
+            self._greenPixelRange = (int((g - b).min()) - tol,
+                                     int((g - r).min()) - tol,
+                                     int(g.min()) - tol - 20)
+        shot = self.captureGame()
+        if shot is None:
+            return 0
+        x1, y1, x2, y2 = rect
+        region = shot[y1:y2 + 1, x1:x2 + 1].astype(np.int16)
+        gbMin, grMin, gMin = self._greenPixelRange
+        b = region[:, :, 0]
+        g = region[:, :, 1]
+        r = region[:, :, 2]
+        mask = (g > b + gbMin) & (g > r + grMin) & (g > gMin)
+        return int(np.count_nonzero(mask))
+
+    def checkGreenPixelTrend(self, maxSamples=30, interval=0.2, minGrowth=30):
+        """持续监控钓鱼区域（X:570-700, Y:403-435）绿色像素变化趋势。
+
+        每隔 interval 秒统计一次绿色像素数，以监控期间出现的最低/最高值
+        为基准：从低点净增 minGrowth 以上判定为持续增多，返回 True；
+        从高点净减 minGrowth 以上判定为持续减少，返回 False；
+        采样 maxSamples 次净变化仍不足 minGrowth 视为保持不变，返回 False。
+        （进度条按离散步进更新，不能用相邻样本的连续增减做判定。）
+        """
+        low = high = None
+        for i in range(maxSamples):
+            if self.taskRuning is False:
+                return False
+            cur = self.countGreenPixels()
+            if low is None:
+                low = high = cur
+            else:
+                low = min(low, cur)
+                high = max(high, cur)
+                if cur >= low + minGrowth:
+                    self.ui.log_printf("INFO", u"绿色像素持续增多: %d -> %d", low, cur)
+                    return True
+                if cur <= high - minGrowth:
+                    self.ui.log_printf("INFO", u"绿色像素持续减少: %d -> %d", high, cur)
+                    return False
+            if i < maxSamples - 1:
+                time.sleep(interval)
+        return False
+
+    def pressKey(self, key, delay=0.15):
         """按下并松开指定按键，支持单个字母/数字及 "space"、"esc"。"""
         self.ensureForeground()
         if key == "space":
@@ -290,7 +349,7 @@ class taskControl:
             vk = ord(key.upper())
         self.ui.log_printf("DEBUG", u"按键 %s", key)
         win32api.keybd_event(vk, 0, 0, 0)
-        time.sleep(0.15)
+        time.sleep(delay)
         win32api.keybd_event(vk, 0, win32con.KEYEVENTF_KEYUP, 0)
 
     def moveCursor(self, pos):
@@ -487,7 +546,7 @@ class taskControl:
         for i in range(600):
             if self.taskRuning is False:
                 return
-            if self.findImage(os.path.join("inWorking.png")) is None:
+            if self.findImage(os.path.join("inWorking.png"), logging=False) is None:
                 workDoneCnt += 1
                 if workDoneCnt >= 3:
                     self.ui.log_printf("INFO", u"采集完成")
@@ -548,44 +607,89 @@ class taskControl:
         self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
         self.scrollDown(10)
         time.sleep(0.5)
-        # 往上拖动地图并查找提尔克那
-        for i in range(10):
-            self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
-            time.sleep(0.6)
-            pos = self.findImage(os.path.join("mapTier.png"), 0.6)
-            if pos is not None:
-                pos = (pos[0], pos[1] - 15)
-                self.clickPos(pos)
-                break
-            time.sleep(0.3)
-            if i == 9:
-                self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
-                return
-        time.sleep(1.0)
-        # 点击佛格斯
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("mapFogesi.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到佛格斯图标，尝试点击失败")
-                return
-        time.sleep(1.0)
-        # 前往佛格斯
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("gotoFogesi.png")):
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
-                return
+        if self.taskFixFailCnt < 2:
+            # 往上拖动地图并查找提尔克那
+            for i in range(10):
+                self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
+                time.sleep(0.6)
+                pos = self.findImage(os.path.join("mapTier.png"), 0.6)
+                if pos is not None:
+                    pos = (pos[0], pos[1] - 15)
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.3)
+                if i == 9:
+                    self.taskFixFailCnt += 1
+                    self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
+                    return
+            time.sleep(1.0)
+            # 点击佛格斯
+            for i in range(6): 
+                if self.taskRuning is False:
+                    return
+                pos = self.findImage(os.path.join("mapFogesi.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.taskFixFailCnt += 1
+                    self.ui.log_printf("ERROR", u"未找到佛格斯图标，尝试点击失败")
+                    return
+            time.sleep(1.0)
+            # 前往佛格斯
+            for i in range(6): 
+                if self.taskRuning is False:
+                    return
+                if self.findImage(os.path.join("gotoFogesi.png")):
+                    self.pressKey("space")
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.taskFixFailCnt += 1
+                    self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                    return
+        else:
+            # 往上拖动地图并查找库汉
+            self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'right')
+            for i in range(10):
+                self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
+                time.sleep(0.6)
+                pos = self.findImage(os.path.join("mapKuhan.png"), 0.6)
+                if pos is not None:
+                    pos = (pos[0], pos[1] - 15)
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.3)
+                if i == 9:
+                    self.ui.log_printf("ERROR", u"未找到库汉图标，尝试点击失败")
+                    return
+            time.sleep(1.0)
+            # 点击阿尔米斯
+            for i in range(6): 
+                if self.taskRuning is False:
+                    return
+                pos = self.findImage(os.path.join("mapAermisi.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.ui.log_printf("ERROR", u"未找到阿尔米斯图标，尝试点击失败")
+                    return
+            time.sleep(1.0)
+            # 前往阿尔米斯
+            for i in range(6): 
+                if self.taskRuning is False:
+                    return
+                if self.findImage(os.path.join("gotoFogesi.png")):
+                    self.pressKey("space")
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                    return
+            self.taskFixFailCnt = 0
         # 查找修理按钮
         for i in range(300): 
             if self.taskRuning is False:
@@ -656,8 +760,6 @@ class taskControl:
         self.pressKey("space")
         time.sleep(1)
         self.ui.log_printf("INFO", u"工具修复流程结束")
-
-
     def packBackpackFlow(self):
         self.ui.log_printf("INFO", u"开始执行整理背包流程")
         # 进入背包
@@ -671,6 +773,17 @@ class taskControl:
             if i == 5:
                 self.ui.log_printf("ERROR", u"从主界面进入背包失败")
                 return
+        time.sleep(1.0)
+        # 检查当前是否为道具页
+        for i in range(3): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("propPage.png"))
+            if pos is not None:
+                self.ui.log_printf("INFO", u"进入道具页")
+                self.clickPos(pos)
+                break
+            time.sleep(0.5)
         time.sleep(1.0)
         # 进入整理
         for i in range(6): 
@@ -756,9 +869,40 @@ class taskControl:
         self.ui.log_printf("INFO", u"整理背包流程结束")
         
     def crossDayFlow(self):
-        # 光标点击画面中心
-        self.clickPos((self.configResolution[0] // 2, self.configResolution[1] // 2))
-        time.sleep(2.0)
+        # 光标点击画面
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay1.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                time.sleep(3.0)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到每日界面标志1")
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay1_1.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                time.sleep(3.0)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到每日界面标志2")
+        for i in range(6): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("crossDay1_2.png"))
+            if pos is not None:
+                self.clickPos(pos)
+                time.sleep(3.0)
+                break
+            time.sleep(0.5)
+            if i == 5:
+                self.ui.log_printf("ERROR", u"未找到每日界面标志3")
         # 点击跳过出席簿
         for i in range(6): 
             if self.taskRuning is False:
@@ -784,16 +928,7 @@ class taskControl:
                 self.ui.log_printf("ERROR", u"未找到确认图标")
         time.sleep(5.0)
         # 退出SP界面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("stellaPickMark.png"), 0.7):
-                self.pressKey("esc")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到退出图标")
-                return
+        self.pressKey("esc")
 
     def fishingFlow(self):
         if self.taskTarget == 6:
@@ -802,7 +937,7 @@ class taskControl:
             self.fishingSTDFlow()
             
     def fishingDFFlow(self):
-        pass
+        self.inFishState()
     
     def fishingSTDFlow(self):
         # 确认为当前为主界面
@@ -889,11 +1024,11 @@ class taskControl:
                     self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                     return
         time.sleep(1.0)
-        # 点击采集
+        # 点击前往钓鱼场
         for i in range(6):
             if self.taskRuning is False:
                 return
-            pos = self.findImage(os.path.join("gotoCollection.png"))
+            pos = self.findImage(os.path.join("fishing", "gotoFishing.png"))
             if pos is not None:
                 self.clickPos(pos)
                 break
@@ -913,3 +1048,146 @@ class taskControl:
                 self.fixToolFlow()
                 return
             time.sleep(0.5)
+        # 到位检查
+        workDoneCnt = 0
+        for i in range(600):
+            if self.taskRuning is False:
+                return
+            if self.findImage(os.path.join("inWorking.png")) is None:
+                workDoneCnt += 1
+                if workDoneCnt >= 3:
+                    self.ui.log_printf("INFO", u"到达钓鱼点")
+                    break
+            else:
+                workDoneCnt = 0
+            time.sleep(0.9)
+            if i == 599:
+                self.ui.log_printf("ERROR", u"到位超时")
+                return
+        # 骑乘检查
+        for i in range(3): 
+            if self.taskRuning is False:
+                return
+            pos = self.findImage(os.path.join("rideMark.png"))
+            if pos is not None:
+                self.ui.log_printf("INFO", u"退出骑乘状态")
+                self.clickPos(pos)
+                time.sleep(2.0)
+                break
+            time.sleep(0.5)
+        # 钓鱼流程
+        self.inFishState()
+
+
+    def inFishState(self):
+        moveState = False
+        packBackpackCleanCnt = 0
+        # 拉远视角
+        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
+        self.scrollDown(10)
+        time.sleep(0.5)
+        self.ui.log_printf("WARNING", u"已调整视角，钓鱼中请勿拉近视角")
+        while self.taskRuning:
+            if moveState is False:
+                self.pressKey('w', 0.05) 
+                moveState = True
+            else:
+                self.pressKey('s', 0.05) 
+                moveState = False
+            time.sleep(0.1)
+            for i in range(6):
+                if self.taskRuning is False:
+                    return
+                if self.findImage(os.path.join("fishing", "casting.png")) is not None:
+                    self.pressKey('space') 
+                    break
+                time.sleep(0.5)
+                if i == 5:
+                    self.ui.log_printf("WARNING", u"未找到抛竿图标")
+                    return
+            time.sleep(1.0)
+            # 检查是否需要维修工具
+            for i in range(3):
+                if self.taskRuning is False:
+                    return
+                if self.findImage(os.path.join("fixToolMark.png")):
+                    if self.taskFixTool == False:
+                        self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用钓鱼工具")
+                        self.taskRuning = False
+                        return
+                    self.fixToolFlow()
+                    return
+                time.sleep(0.5)
+            # 检查钓鱼模式
+            for i in range(3):
+                if self.taskRuning is False:
+                    return
+                pos = self.findImage(os.path.join("fishing", "autoState.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    self.ui.log_printf("INFO", u"钓鱼切换为专心钓鱼")
+                    time.sleep(1.0)
+                    # 切换状态
+                    for i in range(6):
+                        if self.taskRuning is False:
+                            return
+                        if self.findImage(os.path.join("fishing", "fishingFocusMark.png")) is not None:
+                            self.pressKey('space') 
+                            break
+                        time.sleep(0.5)
+                        if i == 5:
+                            self.ui.log_printf("ERROR", u"未找到专心钓鱼图标")
+                            return
+                    time.sleep(1.0)
+                    break
+                time.sleep(0.5)
+            time.sleep(1.0)
+            # 等待上钩
+            for i in range(600):
+                if self.taskRuning is False:
+                    return
+                if self.findImage(os.path.join("fishing", "baitMark.png")) is not None:
+                    self.ui.log_printf("INFO", u"已上钩")
+                    break
+                time.sleep(0.1)
+            # 等待钓鱼结束
+            self.inFishCook()
+            time.sleep(2.5)
+            # 清理背包
+            if self.taskBackpackClean:
+                packBackpackCleanCnt += 1
+                if packBackpackCleanCnt >= 10:
+                    packBackpackCleanCnt = 0
+                    self.packBackpackFlow()
+                    
+            
+    def inFishCook(self):
+        greenIncreaseCnt = 0
+        lastGreenPixels = self.countGreenPixels()
+        fishingCloseCnt = 0
+        while self.taskRuning:
+            greenPixels = self.countGreenPixels()
+            if greenPixels > lastGreenPixels :
+                greenIncreaseCnt += 1
+                if greenIncreaseCnt >= 2:
+                    greenIncreaseCnt = 0
+                    # 老人与海
+                    for i in range(90):
+                        if self.taskRuning is False:
+                            return
+                        if self.findImage(os.path.join("fishing", "baitMark.png")) is not None:
+                            self.pressKey('space') 
+                            break
+                        time.sleep(0.1)
+            else:
+                greenIncreaseCnt = 0
+            lastGreenPixels = greenPixels
+            # 检查钓鱼是否结束
+            if self.findImage(os.path.join("fishing", "inFishingMark.png"), logging=False) is None:
+                fishingCloseCnt += 1
+                if fishingCloseCnt >= 3:
+                    self.ui.log_printf("INFO", u"本轮钓鱼结束")
+                    break
+            else:
+                fishingCloseCnt = 0
+            time.sleep(0.1)
