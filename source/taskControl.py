@@ -279,7 +279,7 @@ class taskControl:
             time.sleep(interval)
         return None
 
-    def countGreenPixels(self, rect=(570, 403, 700, 435)):
+    def countGreenPixels(self, rect=(570, 370, 710, 450)):
         """统计指定区域内的绿色像素数，rect 为配置分辨率坐标系下的
         (x1, y1, x2, y2)，默认为钓鱼进度条区域 X:570-700, Y:403-435。
 
@@ -760,11 +760,6 @@ class taskControl:
         self.pressKey("space")
         time.sleep(1)
         self.ui.log_printf("INFO", u"工具修复流程结束")
-
-    def fixToolTierFlow(self):
-        self.ui.log_printf("INFO", u"开始执行工具修复流程，提尔克那")
-        
-
     def packBackpackFlow(self):
         self.ui.log_printf("INFO", u"开始执行整理背包流程")
         # 进入背包
@@ -1087,6 +1082,11 @@ class taskControl:
     def inFishState(self):
         moveState = False
         packBackpackCleanCnt = 0
+        # 拉远视角
+        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
+        self.scrollDown(10)
+        time.sleep(0.5)
+        self.ui.log_printf("WARNING", u"已调整视角，钓鱼中请勿拉近视角")
         while self.taskRuning:
             if moveState is False:
                 self.pressKey('w', 0.05) 
@@ -1190,4 +1190,4 @@ class taskControl:
                     break
             else:
                 fishingCloseCnt = 0
-            time.sleep(0.08)
+            time.sleep(0.1)
