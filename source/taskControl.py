@@ -489,16 +489,23 @@ class taskControl:
                     if movCursor is True: # 移动光标
                         self.moveCursor(pos)
                     if hitFun is not None: # 匹配到目标时执行函数
-                        hitFun(hitFunParams)
+                        self._callFun(hitFun, hitFunParams)
                     return True
             else: # 未匹配到目标
                 hit = 0
                 if noHitFun is not None: # 未匹配到目标时执行函数
-                    noHitFun(noHitFunParams)
+                    self._callFun(noHitFun, noHitFunParams)
                 if noHitKey is not None: # 每个查询周期未匹配到目标时按键
                     self.pressKey(noHitKey)
             self.appBlockWait(interval) # 阻塞等待时间
         return False
+        
+    def _callFun(self, fun, params):
+        """调用搜索回调：params 为元组时解包为多个参数，否则作为单个参数传入。"""
+        if isinstance(params, tuple):
+            fun(*params)
+        else:
+            fun(params)
         
     def standardCollectionFlow(self):
         self.ui.log_printf("INFO", u"单轮采集开始")
@@ -547,7 +554,7 @@ class taskControl:
                                             noHitFun=self.scrollDown, noHitFunParams=3) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
-        self.appBlockWait(0.6)
+        self.appBlockWait(1.0)
         # 点击采集
         if self.circularSearchOperation(imagePath=os.path.join("gotoCollection.png"),
                                         allTimes=6, interval=0.5,
@@ -584,7 +591,7 @@ class taskControl:
         self.ui.log_printf("INFO", u"开始执行修复工具流程")
         # 返回主界面
         if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
-                                        allTimes=3, interval=1.0,
+                                        allTimes=6, interval=0.5,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
             return
@@ -633,7 +640,8 @@ class taskControl:
             # 等待到位
             if self.circularSearchOperation(imagePath=os.path.join("inWorking.png"),
                                             allTimes=600, interval=1.0,
-                                            hitResults=False, hitOutCnt=12) is False:
+                                            hitResults=False, hitOutCnt=12,
+                                            logging=False) is False:
                 self.ui.log_printf("ERROR", u"广场到位超时")
                 return
             self.ui.log_printf("INFO", u"到位完成")
@@ -657,7 +665,7 @@ class taskControl:
             return
         self.appBlockWait(1.0)
         # 前往佛格斯
-        if self.circularSearchOperation(imagePath=os.path.join("goHere.png.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("goHere.png"),
                                         allTimes=6, interval=0.5,
                                         hitKey='space') is False:
             self.taskFixFailCnt += 1
@@ -682,14 +690,14 @@ class taskControl:
             return
         self.appBlockWait(2.0)
         # 按下空格确认
-        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"),
                                         allTimes=6, interval=0.5,
                                         hitKey='space') is False:
             self.ui.log_printf("ERROR", u"未找到修复图标")
             return
         self.appBlockWait(2.0)
         # 跳过对话
-        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"),
                                         allTimes=6, interval=0.5,
                                         hitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未找到跳过对话图标")
@@ -795,7 +803,6 @@ class taskControl:
         self.pressKey("esc")
 
     def fishingFlow(self):
-        self.ui.log_printf("WARNING", u"执行钓鱼流程时应收起宠物")
         if self.taskTarget == 6:
             self.fishingDFFlow()
         else:
@@ -850,7 +857,7 @@ class taskControl:
                                             noHitFun=self.scrollDown, noHitFunParams=3) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
-        self.appBlockWait(0.5)
+        self.appBlockWait(1.0)
         # 点击前往钓鱼场
         if self.circularSearchOperation(imagePath=os.path.join("fishing", "gotoFishing.png"),
                                         allTimes=6, interval=0.5,
@@ -870,7 +877,8 @@ class taskControl:
         # 到位检查
         if self.circularSearchOperation(imagePath=os.path.join("inWorking.png"),
                                         allTimes=300, interval=1.0,
-                                        hitResults=False, hitOutCnt=12) is False:
+                                        hitResults=False, hitOutCnt=12,
+                                        logging=False) is False:
             self.ui.log_printf("ERROR", u"钓鱼场到位超时")
             return
         self.ui.log_printf("INFO", u"到达钓鱼场")
@@ -886,12 +894,14 @@ class taskControl:
     def inFishState(self):
         moveState = False
         packBackpackCleanCnt = 0
-        # 拉远视角
-        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
-        self.scrollDown(10)
-        self.appBlockWait(0.5)
-        self.ui.log_printf("WARNING", u"已调整视角，钓鱼中请勿拉近视角")
         while self.taskRuning:
+            self.ui.log_printf("WARNING", u"执行钓鱼流程时应收起宠物")
+            # 检查是否在主页
+            if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                            allTimes=6, interval=0.5,
+                                            noHitKey='esc') is False:
+                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+                return
             # 移动
             if moveState is False:
                 self.pressKey('w', 0.05) 
@@ -907,7 +917,7 @@ class taskControl:
                 return
             self.appBlockWait(0.5)
             # 检查是否需要维修工具
-            if self.circularSearchOperation(imagePath=os.path.join("fixToolMark.png"),
+            if self.circularSearchOperation(imagePath=os.path.join("fishing", "noFishingRod.png"),
                                             allTimes=2, interval=0.5) is True:
                 if self.taskFixTool == False:
                     self.ui.log_printf("ERROR", u"未配置维修工具选项，无可用采集工具，任务退出")
