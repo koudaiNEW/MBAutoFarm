@@ -90,6 +90,7 @@ class taskControl:
         self.taskLoopCnt = 0
         self.taskStartTime = None  # 当前任务开始时间（time.time()）
         self._template_cache = {}
+        self._lastPos = {}  # findImage 各模板上次命中的左上角位置（动态 ROI）
         self._greenPixelRange = None  # greenMark.png 绿色判定阈值 (gbMin, grMin, gMin)
         self.taskFixFailCnt = 0
         if configPath:  # 读取配置文件
@@ -107,8 +108,10 @@ class taskControl:
                 self.activateWindow()
                 if self.findImage(os.path.join("crossDay1.png")) : # 检查是否存在签到
                     self.crossDayFlow()
+                if self.findImage(os.path.join("challengeCompleted.png")) : # 检查是否存在挑战任务完成
+                    self.pressKey("space")
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
-                    self.standardFlow()
+                    self.standardCollectionFlow()
                 else:  # 钓鱼任务，进入钓鱼流程
                     self.fishingFlow()
             except Exception as e:
@@ -224,12 +227,12 @@ class taskControl:
             if img is None:
                 self.ui.log_printf("ERROR", u"无法读取目标图像: %s", path)
             else:
-                self.ui.log_printf("INFO", u"加载目标图像 %s", rel_path)
+                self.ui.log_printf("DEBUG", u"加载目标图像 %s", rel_path)
             self._template_cache[rel_path] = img
         return self._template_cache[rel_path]
         
     def captureGame(self):
-        """捕捉窗口客户区画面并缩放至目标分辨率。"""
+        """捕捉窗口客户区画面（彩色）并缩放至目标分辨率。"""
         try:
             origin, size = self.clientGeometry()
             img = ImageGrab.grab(bbox=(origin[0], origin[1],
@@ -239,7 +242,9 @@ class taskControl:
             self.ui.log_printf("WARNING", u"截图失败: %s", e)
             return None
         frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
-        return cv2.resize(frame, self.configResolution)
+        if size != tuple(self.configResolution):  # 已是目标分辨率时跳过多余缩放
+            frame = cv2.resize(frame, self.configResolution)
+        return frame
 
     def clientGeometry(self):
         """返回窗口客户区在屏幕上的 (原点, 尺寸)。"""
@@ -248,22 +253,44 @@ class taskControl:
         return origin, (right - left, bottom - top)
 
     def findImage(self, rel_path, matchingDegree = 0.0, logging=True):
-        """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。"""
+        """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。
+
+        灰度匹配；命中过的模板先在上次位置附近的局部区域（ROI）搜索，
+        未命中再全图搜索，局部匹配可显著降低耗时。
+        """
         template = self.loadTemplate(rel_path)
         shot = self.captureGame() if template is not None else None
         if shot is None:
             return None
-        result = cv2.matchTemplate(shot, template, cv2.TM_CCOEFF_NORMED)
+        threshold = matchingDegree if matchingDegree > 0.0 else self.configMatchThreshold
+        gray_tpl = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+        gray_shot = cv2.cvtColor(shot, cv2.COLOR_BGR2GRAY)
+        last = self._lastPos.get(rel_path)
+        if last is not None:  # 先在上次命中位置 ±80px 的局部区域搜索
+            m = 80
+            h, w = gray_tpl.shape[:2]
+            x0, y0 = max(last[0] - m, 0), max(last[1] - m, 0)
+            x1 = min(last[0] + w + m, gray_shot.shape[1])
+            y1 = min(last[1] + h + m, gray_shot.shape[0])
+            pos = self._matchTemplate(rel_path, gray_shot[y0:y1, x0:x1],
+                                      gray_tpl, threshold, (x0, y0), logging)
+            if pos is not None:
+                return pos
+        return self._matchTemplate(rel_path, gray_shot, gray_tpl,
+                                   threshold, (0, 0), logging)
+
+    def _matchTemplate(self, rel_path, region, template, threshold, offset, logging):
+        """在 region 内匹配模板，命中则记录左上角位置并返回中心点（配置坐标系）。"""
+        result = cv2.matchTemplate(region, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(result)
-        if matchingDegree > 0.0:
-            if max_val < matchingDegree:
-                return None
-        elif max_val < self.configMatchThreshold:
+        if max_val < threshold:
             return None
         h, w = template.shape[:2]
-        pos = (max_loc[0] + w // 2, max_loc[1] + h // 2)
+        top_left = (max_loc[0] + offset[0], max_loc[1] + offset[1])
+        self._lastPos[rel_path] = top_left
+        pos = (top_left[0] + w // 2, top_left[1] + h // 2)
         if logging:
-            self.ui.log_printf("INFO", u"匹配到 %s 相似度=%.2f 位置=%s", rel_path, max_val, str(pos))
+            self.ui.log_printf("DEBUG", u"匹配到 %s 相似度=%.2f 位置=%s", rel_path, max_val, str(pos))
         return pos
     
     def waitImage(self, rel_path, timeout=None, interval=0.2):
@@ -420,8 +447,7 @@ class taskControl:
             time.sleep(duration / steps)
         win32api.mouse_event(win32con.MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
 
-
-    def scrollDown(self, times=1, interval=0.05):
+    def scrollDown(self, times=3, interval=0.05):
         """输入鼠标滚轮向下滚动 times 次。"""
         self.ui.log_printf("DEBUG", u"滚轮向下滚动 %d 次", times)
         for _ in range(times):
@@ -429,134 +455,130 @@ class taskControl:
                 return
             win32api.mouse_event(win32con.MOUSEEVENTF_WHEEL, 0, 0, -120, 0)
             time.sleep(interval)
+            
+    def appBlockWait(self, timeout):
+        outTime = time.time() + timeout
+        while time.time() < outTime:
+            if self.taskRuning is False:
+                return 
 
-
-    def standardFlow(self):
+    def circularSearchOperation(self, imagePath=None, allTimes=6, interval=0.5, 
+                                hitKey=None, noHitKey=None, 
+                                clickImage=False, clickOffset=(0, 0), 
+                                movCursor=False, 
+                                hitResults=True, hitOutCnt=1, 
+                                hitFun=None, noHitFun=None,
+                                hitFunParams=None, noHitFunParams=None,
+                                matchingDegree = 0.0, logging=True):
+        if imagePath is None:
+            self.ui.log_printf("ERROR", u"请指定图片样本路径")
+            return False
+        hit = 0
+        for i in range(allTimes):
+            if self.taskRuning is False: # 任务停止
+                return False
+            pos = self.findImage(imagePath, matchingDegree, logging) # 寻找图片
+            if (pos is not None and hitResults is True)or(pos is None and hitResults is False): # 匹配到目标
+                hit += 1
+                if hit >= hitOutCnt: # 连续匹配
+                    if hitKey is not None: # 按下按键
+                        self.pressKey(hitKey)
+                    if clickImage is True: # 点击坐标
+                        pos = pos[0] + clickOffset[0], pos[1] + clickOffset[1]
+                        self.clickPos(pos)
+                    if movCursor is True: # 移动光标
+                        self.moveCursor(pos)
+                    if hitFun is not None: # 匹配到目标时执行函数
+                        self._callFun(hitFun, hitFunParams)
+                    return True
+            else: # 未匹配到目标
+                hit = 0
+                if noHitFun is not None: # 未匹配到目标时执行函数
+                    self._callFun(noHitFun, noHitFunParams)
+                if noHitKey is not None: # 每个查询周期未匹配到目标时按键
+                    self.pressKey(noHitKey)
+            self.appBlockWait(interval) # 阻塞等待时间
+        return False
+        
+    def _callFun(self, fun, params):
+        """调用搜索回调：params 为元组时解包为多个参数，否则作为单个参数传入。"""
+        if isinstance(params, tuple):
+            fun(*params)
+        else:
+            fun(params)
+        
+    def standardCollectionFlow(self):
         self.ui.log_printf("INFO", u"单轮采集开始")
         # 确认为当前为主界面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
-                break
-            self.pressKey("esc")
-            time.sleep(1.0)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 返回失败")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=1.0,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+            return
         # 按下C进入人物界面
-        time.sleep(1.0)
+        self.appBlockWait(0.6)
         self.pressKey('c')
-        time.sleep(1.0)
+        self.appBlockWait(0.6)
         # 点击live图标进入生活技能界面
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("liveSkill1.png"))
-            if pos:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("liveSkill1.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
+            return
+        self.appBlockWait(0.6)
         # 点击生活技能图标
-        type_path = os.path.join("taskType", "%d.png" % self.taskType)
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(type_path)
-            if pos:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("taskType", "%d.png" % self.taskType),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
+            return
+        self.appBlockWait(0.6)
         # 移动光标到采集物列表
-        list_path = os.path.join("taskType", str(self.taskType), "listCheck.png")
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(list_path)
-            if pos:
-                self.moveCursor(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
-                return
-        time.sleep(0.5)
+        if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "listCheck.png"),
+                                        allTimes=6, interval=0.5,
+                                        movCursor=True) is False:
+            self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
+            return
+        self.appBlockWait(0.6)
         # 点击目标采集物
-        target_path = os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget)
         if self.taskTarget < 4:
-            for i in range(6):
-                if self.taskRuning is False:
-                    return
-                pos = self.findImage(target_path)
-                if pos:
-                    self.clickPos(pos)
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
-                    return
+            if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
+                                            allTimes=6, interval=0.5,
+                                            clickImage=True) is False:
+                self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                return
         else:
-            for i in range(12):
-                if self.taskRuning is False:
-                    return
-                self.scrollDown(3)
-                time.sleep(0.2)
-                pos = self.findImage(target_path)
-                if pos:
-                    self.clickPos(pos)
-                    break
-                if i == 11:
-                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
-                    return
-        time.sleep(1.0)
+            if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
+                                            allTimes=12, interval=0.2,
+                                            clickImage=True, 
+                                            noHitFun=self.scrollDown, noHitFunParams=3) is False:
+                self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                return
+        self.appBlockWait(1.0)
         # 点击采集
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("gotoCollection.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("gotoCollection.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
+            return
+        self.appBlockWait(0.6)
         # 检查是否需要维修工具
-        for i in range(4):
-            if self.taskRuning is False:
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolMark.png"),
+                                        allTimes=4, interval=0.5) is True:
+            if self.taskFixTool == False:
+                self.ui.log_printf("ERROR", u"未配置维修工具选项，无可用采集工具，任务退出")
+                self.taskRuning = False
                 return
-            if self.findImage(os.path.join("fixToolMark.png")):
-                if self.taskFixTool == False:
-                    self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用采集工具")
-                    self.taskRuning = False
-                    return
-                self.fixToolFlow()
-                return
-            time.sleep(0.5)
-        # 等待采集完成
-        workDoneCnt = 0
-        for i in range(600):
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("inWorking.png"), logging=False) is None:
-                workDoneCnt += 1
-                if workDoneCnt >= 3:
-                    self.ui.log_printf("INFO", u"采集完成")
-                    break
-            else:
-                workDoneCnt = 0
-            time.sleep(0.9)
-            if i == 599:
-                self.ui.log_printf("ERROR", u"采集超时")
-                return
+            self.fixToolFlow()
+            return
+        # 等待采集退出
+        if self.circularSearchOperation(imagePath=os.path.join("inWorking.png"),
+                                        allTimes=600, interval=1.0,
+                                        hitResults=False, hitOutCnt=3,
+                                        logging=False) is False:
+            self.ui.log_printf("ERROR", u"采集超时")
+            return
+        self.ui.log_printf("INFO", u"采集退出")
         # 整理背包
         if self.taskBackpackClean == True:
             self.taskLoopCnt += 1
@@ -568,370 +590,219 @@ class taskControl:
     def fixToolFlow(self):
         self.ui.log_printf("INFO", u"开始执行修复工具流程")
         # 返回主界面
-        for i in range(8): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
-                break
-            self.pressKey("esc")
-            time.sleep(0.7)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"从背包返回主界面失败")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+            return
         # 进入本地地图
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("mapMark.png")):
-                self.pressKey("m")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到地图图标，尝试按 M 键进入失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("mapMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='m') is False:
+            self.ui.log_printf("ERROR", u"未找到地图图标，尝试按 M 键进入失败")
+            return
+        self.appBlockWait(1.0)
         # 进入欧拉大陆
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("mapOula.png"), 0.7)
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到欧拉大陆图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("mapOula.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True,
+                                        matchingDegree=0.7) is False:
+            self.ui.log_printf("ERROR", u"未找到欧拉大陆图标，尝试点击失败")
+            return
+        self.appBlockWait(1.0)
         # 移动光标并缩小地图
         self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
         self.scrollDown(10)
-        time.sleep(0.5)
-        if self.taskFixFailCnt > 2:
+        self.appBlockWait(0.5)
+        if self.taskFixFailCnt > 2: # 达到失败重试次数，移动到杜巴顿广场再次尝试
             self.taskFixFailCnt = 0
             # 查找杜巴顿
-            for i in range(6): 
-                if self.taskRuning is False:
-                    return
-                pos = self.findImage(os.path.join("mapDubadun.png"))
-                if pos is not None:
-                    pos = (pos[0], pos[1] - 15)
-                    self.clickPos(pos)
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.taskFixFailCnt += 1
-                    self.ui.log_printf("ERROR", u"未找到杜巴顿图标，尝试点击失败")
-                    return
-            time.sleep(1.5)
+            if self.circularSearchOperation(imagePath=os.path.join("mapDubadun.png"),
+                                            allTimes=6, interval=0.5,
+                                            clickImage=True, clickOffset=(0, -15)) is False:
+                self.ui.log_printf("ERROR", u"未找到杜巴顿图标，尝试点击失败")
+                return
+            self.appBlockWait(1.5)
             # 查找广场
-            for i in range(6): 
-                if self.taskRuning is False:
-                    return
-                pos = self.findImage(os.path.join("mapSquare.png"))
-                if pos is not None:
-                    self.clickPos(pos)
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.taskFixFailCnt += 1
-                    self.ui.log_printf("ERROR", u"未找到广场图标，尝试点击失败")
-                    return
-            time.sleep(1.0)
+            if self.circularSearchOperation(imagePath=os.path.join("mapSquare.png"),
+                                            allTimes=6, interval=0.5,
+                                            clickImage=True) is False:
+                self.ui.log_printf("ERROR", u"未找到广场图标，尝试点击失败")
+                return
+            self.appBlockWait(1.0)
             # 前往广场
-            for i in range(6): 
-                if self.taskRuning is False:
-                    return
-                if self.findImage(os.path.join("gotoFogesi.png")):
-                    self.pressKey("space")
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.taskFixFailCnt += 1
-                    self.ui.log_printf("ERROR", u"未找到前往此处图标")
-                    return
-            time.sleep(1.0)
+            if self.circularSearchOperation(imagePath=os.path.join("goHere.png"),
+                                            allTimes=6, interval=0.5,
+                                            hitKey='space') is False:
+                self.ui.log_printf("ERROR", u"未找到前往此处图标")
+                return
+            self.appBlockWait(1.0)
             # 等待到位
-            NECnt = 0
-            for i in range(600):
-                if self.taskRuning is False:
-                    return
-                if self.findImage(os.path.join("inWorking.png"), logging=False) is None:
-                    NECnt += 1
-                    if NECnt >= 12:
-                        self.ui.log_printf("INFO", u"到位完成")
-                        break
-                else:
-                    NECnt = 0
-                time.sleep(0.9)
-                if i == 599:
-                    self.ui.log_printf("ERROR", u"广场到位超时")
-                    return
+            if self.circularSearchOperation(imagePath=os.path.join("inWorking.png"),
+                                            allTimes=600, interval=1.0,
+                                            hitResults=False, hitOutCnt=12,
+                                            logging=False) is False:
+                self.ui.log_printf("ERROR", u"广场到位超时")
+                return
+            self.ui.log_printf("INFO", u"到位完成")
             return
         
         # 往上拖动地图并查找提尔克那
-        for i in range(10):
-            self.cursorSliding((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')
-            time.sleep(0.6)
-            pos = self.findImage(os.path.join("mapTier.png"), 0.6)
-            if pos is not None:
-                pos = (pos[0], pos[1] - 15)
-                self.clickPos(pos)
-                break
-            time.sleep(0.3)
-            if i == 9:
-                self.taskFixFailCnt += 1
-                self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("mapTier.png"),
+                                        allTimes=10, interval=1.0,
+                                        clickImage=True, clickOffset=(0,-15),
+                                        noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')) is False:
+            self.taskFixFailCnt += 1
+            self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
+            return
+        self.appBlockWait(1.0)
         # 点击佛格斯
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("mapFogesi.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.taskFixFailCnt += 1
-                self.ui.log_printf("ERROR", u"未找到佛格斯图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("mapFogesi.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.taskFixFailCnt += 1
+            self.ui.log_printf("ERROR", u"未找到佛格斯图标，尝试点击失败")
+            return
+        self.appBlockWait(1.0)
         # 前往佛格斯
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("gotoFogesi.png")):
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.taskFixFailCnt += 1
-                self.ui.log_printf("ERROR", u"未找到前往此处图标")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("goHere.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.taskFixFailCnt += 1
+            self.ui.log_printf("ERROR", u"未找到前往此处图标")
+            return
         # 查找修理按钮
-        for i in range(300): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("fixToolKey.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(1)
-            if i == 299:
-                self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolKey.png"),
+                                        allTimes=300, interval=1,
+                                        clickImage=True) is False:
+            self.taskFixFailCnt += 1
+            self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
+            return
+        self.appBlockWait(2.0)
         # 按下空格跳过对话
-        time.sleep(2)
         self.pressKey("space")
-        time.sleep(2)
+        self.appBlockWait(2.0)
         # 点击全部修理
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("fixAllKey.png"), 0.7)
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
-                return
-        time.sleep(2.0)
+        if self.circularSearchOperation(imagePath=os.path.join("fixAllKey.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
+            return
+        self.appBlockWait(2.0)
         # 按下空格确认
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("fixKey.png"), 0.7):
-                self.pressKey("space")
-                break
-            time.sleep(0.6)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到修复图标")
-                return
-        time.sleep(2.0)
+        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.ui.log_printf("ERROR", u"未找到修复图标")
+            return
+        self.appBlockWait(2.0)
         # 跳过对话
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("fixToolOut.png"), 0.7):
-                self.pressKey("esc")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到跳过对话图标")
-                return
-        time.sleep(2.0)
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未找到跳过对话图标")
+            return
+        self.appBlockWait(2.0)
         # 结束对话
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("endTalkKey.png"), 0.7)
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("endTalkKey.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
+            return
+        self.appBlockWait(2.0)
         # 按下空格跳过对话
-        time.sleep(2.0)
         self.pressKey("space")
-        time.sleep(1)
+        self.appBlockWait(1.0)
         self.taskFixFailCnt = 0
         self.ui.log_printf("INFO", u"工具修复流程结束")
+        
     def packBackpackFlow(self):
         self.ui.log_printf("INFO", u"开始执行整理背包流程")
         # 进入背包
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
-                self.pressKey("i")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"从主界面进入背包失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='i') is False:
+            self.ui.log_printf("ERROR", u"从主界面进入背包失败")
+            return
+        self.appBlockWait(1.0)
         # 检查当前是否为道具页
-        for i in range(3): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("propPage.png"))
-            if pos is not None:
-                self.ui.log_printf("INFO", u"进入道具页")
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("propPage.png"),
+                                        allTimes=1, interval=0,
+                                        clickImage=True) is True:
+            self.appBlockWait(0.5)
         # 进入整理
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("organize1.png")):
-                self.pressKey("a")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"从背包进入整理失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("organize1.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='a') is False:
+            self.ui.log_printf("ERROR", u"从背包进入整理失败")
+            return
+        self.appBlockWait(1.0)
         # 检查大胆整理关闭
-        for i in range(3): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("organizeBold.png"))
-            if pos is not None:
-                self.ui.log_printf("INFO", u"关闭大胆整理")
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("organizeBold.png"),
+                                        allTimes=2, interval=0.5,
+                                        clickImage=True) is True:
+            self.appBlockWait(0.5)
         # 检查是否需要整理
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("noOrganize.png")):
-                self.ui.log_printf("INFO", u"无需整理背包")
-                self.pressKey("esc")
-                time.sleep(1.0)
-                self.pressKey("esc")
-                return
-            time.sleep(0.2)
-        # 整理1
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("organize2.png")):
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"执行整理1失败")
-                return
-        time.sleep(1.0)
-        # 整理2
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("organize3.png")):
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"执行整理2失败")
-                return
-        time.sleep(1.0)
-        # 确认
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("organizeConfirm.png")):
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"执行整理确认失败")
-                return
-        time.sleep(1.0)
-        # 返回主界面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
-                break
+        if self.circularSearchOperation(imagePath=os.path.join("noOrganize.png"),
+                                        allTimes=3, interval=0.5) is True:
+            self.ui.log_printf("INFO", u"无需整理背包")
+            self.appBlockWait(0.5)
             self.pressKey("esc")
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"从背包返回主界面失败")
-                return
+            self.appBlockWait(0.5)
+            self.pressKey("esc")
+            return
+        # 整理1
+        if self.circularSearchOperation(imagePath=os.path.join("organize2.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.ui.log_printf("ERROR", u"从背包进入整理失败")
+            return
+        self.appBlockWait(1.0)
+        # 整理2
+        if self.circularSearchOperation(imagePath=os.path.join("organize3.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.ui.log_printf("ERROR", u"执行整理2失败")
+            return
+        self.appBlockWait(1.0)
+        # 确认
+        if self.circularSearchOperation(imagePath=os.path.join("organizeConfirm.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.ui.log_printf("ERROR", u"执行整理确认失败")
+            return
+        self.appBlockWait(1.0)
+        # 返回主界面
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"从背包返回主界面失败")
+            return
         self.ui.log_printf("INFO", u"整理背包流程结束")
         
     def crossDayFlow(self):
         # 光标点击画面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("crossDay1.png"))
-            if pos is not None:
-                pos = (pos[0], pos[1] + 60)
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到每日界面标志1")
-        time.sleep(3.0)
+        if self.circularSearchOperation(imagePath=os.path.join("crossDay1.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True, clickOffset=(0,60)) is False:
+            self.ui.log_printf("ERROR", u"未找到每日界面标志1")
+        self.appBlockWait(3.0)
         # 点击跳过出席簿
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("crossDay2.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到跳过出席簿图标")
-        time.sleep(2.0)
+        if self.circularSearchOperation(imagePath=os.path.join("crossDay2.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到跳过出席簿图标")
+        self.appBlockWait(3.0)
         # 点击确认
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("crossDay3.png")):
-                time.sleep(1.0)
-                self.pressKey("space")
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到确认图标")
-        time.sleep(5.0)
+        if self.circularSearchOperation(imagePath=os.path.join("crossDay3.png"),
+                                        allTimes=6, interval=0.5,
+                                        hitKey='space') is False:
+            self.ui.log_printf("ERROR", u"未找到确认图标")
+        self.appBlockWait(5.0)
         # 退出SP界面
         self.pressKey("esc")
 
     def fishingFlow(self):
-        self.ui.log_printf("WARNING", u"执行钓鱼流程时应收起宠物")
         if self.taskTarget == 6:
             self.fishingDFFlow()
         else:
@@ -942,228 +813,152 @@ class taskControl:
     
     def fishingSTDFlow(self):
         # 确认为当前为主界面
-        for i in range(6): 
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("backpack.png")) or self.findImage(os.path.join("backpack1.png")):
-                break
-            self.pressKey("esc")
-            time.sleep(1.0)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 返回失败")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=1.0,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+            return
+        self.appBlockWait(1.0)
         # 按下C进入人物界面
-        time.sleep(1.0)
         self.pressKey('c')
-        time.sleep(1.0)
+        self.appBlockWait(1.0)
         # 点击live图标进入生活技能界面
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("liveSkill1.png"))
-            if pos:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("liveSkill1.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到生活技能图标，尝试点击失败")
+            return
+        self.appBlockWait(0.5)
         # 点击生活技能图标
-        type_path = os.path.join("taskType", "%d.png" % self.taskType)
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(type_path)
-            if pos:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
-                return
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("taskType", "%d.png" % self.taskType),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到目标生活技能图标，尝试点击失败")
+            return
+        self.appBlockWait(0.5)
         # 移动光标到采集物列表
-        list_path = os.path.join("taskType", str(self.taskType), "listCheck.png")
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(list_path)
-            if pos:
-                self.moveCursor(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
-                return
-        time.sleep(0.5)
+        if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "listCheck.png"),
+                                        allTimes=6, interval=0.5,
+                                        movCursor=True) is False:
+            self.ui.log_printf("ERROR", u"未找到采集物列表，尝试移动光标失败")
+            return
+        self.appBlockWait(0.5)
         # 点击目标采集物
-        target_path = os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget)
         if self.taskTarget < 4:
-            for i in range(6):
-                if self.taskRuning is False:
-                    return
-                pos = self.findImage(target_path)
-                if pos:
-                    self.clickPos(pos)
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
-                    return
+            if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
+                                            allTimes=6, interval=0.5,
+                                            clickImage=True) is False:
+                self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                return
         else:
-            for i in range(12):
-                if self.taskRuning is False:
-                    return
-                self.scrollDown(3)
-                time.sleep(0.2)
-                pos = self.findImage(target_path)
-                if pos:
-                    self.clickPos(pos)
-                    break
-                if i == 11:
-                    self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
-                    return
-        time.sleep(1.0)
+            if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
+                                            allTimes=12, interval=0.2,
+                                            clickImage=True, 
+                                            noHitFun=self.scrollDown, noHitFunParams=3) is False:
+                self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
+                return
+        self.appBlockWait(1.0)
         # 点击前往钓鱼场
-        for i in range(6):
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("fishing", "gotoFishing.png"))
-            if pos is not None:
-                self.clickPos(pos)
-                break
-            time.sleep(0.5)
-            if i == 5:
-                self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
-        time.sleep(1.0)
+        if self.circularSearchOperation(imagePath=os.path.join("fishing", "gotoFishing.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("ERROR", u"未找到采集按钮，尝试点击失败")
+            return
+        self.appBlockWait(0.5)
         # 检查是否需要维修工具
-        for i in range(4):
-            if self.taskRuning is False:
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolMark.png"),
+                                        allTimes=3, interval=0.5) is True:
+            if self.taskFixTool == False:
+                self.ui.log_printf("ERROR", u"未配置维修工具选项，无可用采集工具，任务退出")
+                self.taskRuning = False
                 return
-            if self.findImage(os.path.join("fixToolMark.png")):
-                if self.taskFixTool == False:
-                    self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用采集工具")
-                    self.taskRuning = False
-                    return
-                self.fixToolFlow()
-                return
-            time.sleep(0.5)
+            self.fixToolFlow()
+            return
         # 到位检查
-        workDoneCnt = 0
-        for i in range(600):
-            if self.taskRuning is False:
-                return
-            if self.findImage(os.path.join("inWorking.png"), logging=False) is None:
-                workDoneCnt += 1
-                if workDoneCnt >= 3:
-                    self.ui.log_printf("INFO", u"到达钓鱼点")
-                    break
-            else:
-                workDoneCnt = 0
-            time.sleep(0.9)
-            if i == 599:
-                self.ui.log_printf("ERROR", u"到位超时")
-                return
+        if self.circularSearchOperation(imagePath=os.path.join("inWorking.png"),
+                                        allTimes=300, interval=1.0,
+                                        hitResults=False, hitOutCnt=12,
+                                        logging=False) is False:
+            self.ui.log_printf("ERROR", u"钓鱼场到位超时")
+            return
+        self.ui.log_printf("INFO", u"到达钓鱼场")
         # 骑乘检查
-        for i in range(3): 
-            if self.taskRuning is False:
-                return
-            pos = self.findImage(os.path.join("rideMark.png"))
-            if pos is not None:
-                self.ui.log_printf("INFO", u"退出骑乘状态")
-                self.clickPos(pos)
-                time.sleep(2.0)
-                break
-            time.sleep(0.5)
+        if self.circularSearchOperation(imagePath=os.path.join("rideMark.png"),
+                                        allTimes=3, interval=0.5,
+                                        clickImage=True) is True:
+            self.ui.log_printf("INFO", u"退出骑乘状态")
+            self.appBlockWait(2.0)
         # 钓鱼流程
         self.inFishState()
-
 
     def inFishState(self):
         moveState = False
         packBackpackCleanCnt = 0
-        # 拉远视角
-        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
-        self.scrollDown(10)
-        time.sleep(0.5)
-        self.ui.log_printf("WARNING", u"已调整视角，钓鱼中请勿拉近视角")
         while self.taskRuning:
+            self.ui.log_printf("WARNING", u"执行钓鱼流程时应收起宠物")
+            # 检查是否在主页
+            if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                            allTimes=6, interval=0.5,
+                                            noHitKey='esc') is False:
+                self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+                return
+            # 移动
             if moveState is False:
                 self.pressKey('w', 0.05) 
                 moveState = True
             else:
                 self.pressKey('s', 0.05) 
                 moveState = False
-            time.sleep(0.1)
-            for i in range(6):
-                if self.taskRuning is False:
-                    return
-                if self.findImage(os.path.join("fishing", "casting.png")) is not None:
-                    self.pressKey('space') 
-                    break
-                time.sleep(0.5)
-                if i == 5:
-                    self.ui.log_printf("WARNING", u"未找到抛竿图标")
-                    return
-            time.sleep(1.0)
+            # 尝试抛竿
+            if self.circularSearchOperation(imagePath=os.path.join("fishing", "casting.png"),
+                                            allTimes=6, interval=0.5,
+                                            hitKey='space') is False:
+                self.ui.log_printf("ERROR", u"未找到抛竿图标")
+                return
+            self.appBlockWait(0.5)
             # 检查是否需要维修工具
-            for i in range(3):
-                if self.taskRuning is False:
+            if self.circularSearchOperation(imagePath=os.path.join("fishing", "noFishingRod.png"),
+                                            allTimes=2, interval=0.5) is True:
+                if self.taskFixTool == False:
+                    self.ui.log_printf("ERROR", u"未配置维修工具选项，无可用采集工具，任务退出")
+                    self.taskRuning = False
                     return
-                if self.findImage(os.path.join("fixToolMark.png")):
-                    if self.taskFixTool == False:
-                        self.ui.log_printf("WARNING", u"未配置维修工具选项，无可用钓鱼工具")
-                        self.taskRuning = False
-                        return
-                    self.fixToolFlow()
-                    return
-                time.sleep(0.5)
+                self.fixToolFlow()
+                return
             # 检查钓鱼模式
-            for i in range(3):
-                if self.taskRuning is False:
+            if self.circularSearchOperation(imagePath=os.path.join("fishing", "autoState.png"),
+                                            allTimes=2, interval=0.5,
+                                            clickImage=True) is True:
+                self.ui.log_printf("INFO", u"钓鱼切换为专心钓鱼")
+                self.appBlockWait(0.5)
+                # 切换状态
+                if self.circularSearchOperation(imagePath=os.path.join("fishing", "fishingFocusMark.png"),
+                                                allTimes=6, interval=0.5,
+                                                hitKey='space') is False:
+                    self.ui.log_printf("ERROR", u"未找到专心钓鱼图标")
                     return
-                pos = self.findImage(os.path.join("fishing", "autoState.png"))
-                if pos is not None:
-                    self.clickPos(pos)
-                    self.ui.log_printf("INFO", u"钓鱼切换为专心钓鱼")
-                    time.sleep(1.0)
-                    # 切换状态
-                    for i in range(6):
-                        if self.taskRuning is False:
-                            return
-                        if self.findImage(os.path.join("fishing", "fishingFocusMark.png")) is not None:
-                            self.pressKey('space') 
-                            break
-                        time.sleep(0.5)
-                        if i == 5:
-                            self.ui.log_printf("ERROR", u"未找到专心钓鱼图标")
-                            return
-                    time.sleep(1.0)
-                    break
-                time.sleep(0.5)
-            time.sleep(1.0)
+                self.appBlockWait(0.5)
             # 等待上钩
-            for i in range(600):
-                if self.taskRuning is False:
-                    return
-                if self.findImage(os.path.join("fishing", "baitMark.png")) is not None:
-                    self.ui.log_printf("INFO", u"已上钩")
-                    break
-                time.sleep(0.1)
+            if self.circularSearchOperation(imagePath=os.path.join("fishing", "baitMark.png"),
+                                            allTimes=300, interval=0.2) is False:
+                self.ui.log_printf("ERROR", u"等待上钩超时")
+                return
+            self.ui.log_printf("INFO", u"已上钩")
             # 等待钓鱼结束
-            time.sleep(1)
             self.inFishCook()
-            time.sleep(2.5)
+            time.sleep(3.0)
             # 清理背包
             if self.taskBackpackClean:
                 packBackpackCleanCnt += 1
-                if packBackpackCleanCnt >= 10:
+                if packBackpackCleanCnt >= 20:
                     packBackpackCleanCnt = 0
                     self.packBackpackFlow()
                     
-            
     def inFishCook(self):
+        # 拉远视角
+        self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
+        self.scrollDown(10)
+        self.appBlockWait(0.2)
         greenIncreaseCnt = 0
         lastGreenPixels = self.countGreenPixels()
         fishingCloseCnt = 0
@@ -1174,22 +969,19 @@ class taskControl:
                 if greenIncreaseCnt >= 2:
                     greenIncreaseCnt = 0
                     # 老人与海
-                    for i in range(20):
-                        if self.taskRuning is False:
-                            return
-                        if self.findImage(os.path.join("fishing", "baitMark.png")) is not None:
-                            self.pressKey('space') 
-                            break
-                        time.sleep(0.1)
+                    if self.circularSearchOperation(imagePath=os.path.join("fishing", "baitMark.png"),
+                                                    allTimes=10, interval=0.2,
+                                                    hitKey='space') is False:
+                        self.ui.log_printf("WARNING", u"提杆CD中")
             else:
                 greenIncreaseCnt = 0
             lastGreenPixels = greenPixels
             # 检查钓鱼是否结束
-            if self.findImage(os.path.join("fishing", "inFishingMark.png"), matchingDegree=0.6, logging=False) is None:
+            if self.findImage(os.path.join("fishing", "inFishingMark.png"), logging=False) is None:
                 fishingCloseCnt += 1
                 if fishingCloseCnt >= 3:
                     self.ui.log_printf("INFO", u"本轮钓鱼结束")
                     break
             else:
                 fishingCloseCnt = 0
-            time.sleep(0.1)
+            self.appBlockWait(0.08)
