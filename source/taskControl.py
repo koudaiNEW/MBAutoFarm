@@ -127,7 +127,7 @@ class taskControl:
             self.configProcess = "MabinogiMobile.exe"
             self.configResolution = (1280, 960)
             self.configMatchThreshold = 0.86
-            self.configClickRandomOffset = 15
+            self.configClickRandomOffset = 8
             self.saveConfig()
             return
         try:
@@ -144,7 +144,7 @@ class taskControl:
         self.configProcess = data.get("gameProcess", "MabinogiMobile.exe")
         self.configResolution = tuple(data.get("gameResolution", [1280, 960]))
         self.configMatchThreshold = data.get("matchThreshold", 0.86)
-        self.configClickRandomOffset = data.get("clickRandomOffset", 15)
+        self.configClickRandomOffset = data.get("clickRandomOffset", 8)
 
     def saveConfig(self):
         """保存 config.json"""
@@ -678,38 +678,39 @@ class taskControl:
             self.taskFixFailCnt += 1
             self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格跳过对话
         self.pressKey("space")
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 点击全部修理
         if self.circularSearchOperation(imagePath=os.path.join("fixAllKey.png"),
                                         allTimes=6, interval=0.5,
-                                        clickImage=True) is False:
+                                        clickImage=True,
+                                        matchingDegree=0.7) is False:
             self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格确认
         if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"),
                                         allTimes=6, interval=0.5,
                                         hitKey='space') is False:
             self.ui.log_printf("ERROR", u"未找到修复图标")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 跳过对话
         if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"),
                                         allTimes=6, interval=0.5,
                                         hitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未找到跳过对话图标")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 结束对话
         if self.circularSearchOperation(imagePath=os.path.join("endTalkKey.png"),
                                         allTimes=6, interval=0.5,
                                         clickImage=True) is False:
             self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格跳过对话
         self.pressKey("space")
         self.appBlockWait(1.0)
