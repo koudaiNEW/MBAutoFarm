@@ -130,7 +130,7 @@ class taskControl:
         if not os.path.exists(self.configPath): # 配置文件不存在则创建
             self.configProcess = "MabinogiMobile.exe"
             self.configResolution = (1280, 960)
-            self.configMatchThreshold = 0.88
+            self.configMatchThreshold = 0.86
             self.configClickRandomOffset = 8
             self.saveConfig()
             return
@@ -147,7 +147,7 @@ class taskControl:
         # 读取配置项
         self.configProcess = data.get("gameProcess", "MabinogiMobile.exe")
         self.configResolution = tuple(data.get("gameResolution", [1280, 960]))
-        self.configMatchThreshold = data.get("matchThreshold", 0.88)
+        self.configMatchThreshold = data.get("matchThreshold", 0.86)
         self.configClickRandomOffset = data.get("clickRandomOffset", 8)
 
     def saveConfig(self):
@@ -548,13 +548,13 @@ class taskControl:
         if self.taskTarget < 4:
             if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
                                             allTimes=6, interval=0.5,
-                                            clickImage=True) is False:
+                                            clickImage=True, matchingDegree=0.88) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
         else:
             if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
                                             allTimes=12, interval=0.2,
-                                            clickImage=True, 
+                                            clickImage=True,  matchingDegree=0.88, 
                                             noHitFun=self.scrollDown, noHitFunParams=3) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
@@ -623,7 +623,7 @@ class taskControl:
             # 查找杜巴顿
             if self.circularSearchOperation(imagePath=os.path.join("mapDubadun.png"),
                                             allTimes=3, interval=1.0,
-                                            clickImage=True, clickOffset=(0,-15),
+                                            clickImage=True, clickOffset=(0,-15), matchingDegree=0.8, 
                                             noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'down')) is False:
                 self.ui.log_printf("ERROR", u"未找到杜巴顿图标，尝试点击失败")
                 return
@@ -655,7 +655,7 @@ class taskControl:
         # 往上拖动地图并查找提尔克那
         if self.circularSearchOperation(imagePath=os.path.join("mapTier.png"),
                                         allTimes=10, interval=1.0,
-                                        clickImage=True, clickOffset=(0,-15),
+                                        clickImage=True, clickOffset=(0,-15), matchingDegree=0.7,
                                         noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')) is False:
             self.taskFixFailCnt += 1
             self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
@@ -696,14 +696,14 @@ class taskControl:
             return
         self.appBlockWait(3.0)
         # 按下空格确认
-        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"), matchingDegree=0.7, 
                                         allTimes=6, interval=0.5,
                                         hitKey='space') is False:
             self.ui.log_printf("ERROR", u"未找到修复图标")
             return
         self.appBlockWait(3.0)
         # 跳过对话
-        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"), matchingDegree=0.7, 
                                         allTimes=6, interval=0.5,
                                         hitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未找到跳过对话图标")
