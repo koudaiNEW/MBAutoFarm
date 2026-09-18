@@ -126,7 +126,7 @@ class taskControl:
         if not os.path.exists(self.configPath): # 配置文件不存在则创建
             self.configProcess = "MabinogiMobile.exe"
             self.configResolution = (1280, 960)
-            self.configMatchThreshold = 0.86
+            self.configMatchThreshold = 0.88
             self.configClickRandomOffset = 8
             self.saveConfig()
             return
@@ -143,7 +143,7 @@ class taskControl:
         # 读取配置项
         self.configProcess = data.get("gameProcess", "MabinogiMobile.exe")
         self.configResolution = tuple(data.get("gameResolution", [1280, 960]))
-        self.configMatchThreshold = data.get("matchThreshold", 0.86)
+        self.configMatchThreshold = data.get("matchThreshold", 0.88)
         self.configClickRandomOffset = data.get("clickRandomOffset", 8)
 
     def saveConfig(self):
@@ -614,12 +614,13 @@ class taskControl:
         self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
         self.scrollDown(10)
         self.appBlockWait(0.5)
-        if self.taskFixFailCnt > 2: # 达到失败重试次数，移动到杜巴顿广场再次尝试
+        if self.taskFixFailCnt > 1: # 达到失败重试次数，移动到杜巴顿广场再次尝试
             self.taskFixFailCnt = 0
             # 查找杜巴顿
             if self.circularSearchOperation(imagePath=os.path.join("mapDubadun.png"),
-                                            allTimes=6, interval=0.5,
-                                            clickImage=True, clickOffset=(0, -15)) is False:
+                                            allTimes=3, interval=1.0,
+                                            clickImage=True, clickOffset=(0,-15),
+                                            noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'down')) is False:
                 self.ui.log_printf("ERROR", u"未找到杜巴顿图标，尝试点击失败")
                 return
             self.appBlockWait(1.5)
