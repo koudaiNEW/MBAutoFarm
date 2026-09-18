@@ -110,6 +110,10 @@ class taskControl:
                     self.crossDayFlow()
                 if self.findImage(os.path.join("challengeCompleted.png")) : # 检查是否存在挑战任务完成
                     self.pressKey("space")
+                    self.appBlockWait(1.0)
+                if self.findImage(os.path.join("networkDisconnected.png")) : # 检查是否网络断开
+                    self.pressKey("space")
+                    self.appBlockWait(1.0)
                 if self.taskType < 8:  # 非钓鱼任务，进入标准流程
                     self.standardCollectionFlow()
                 else:  # 钓鱼任务，进入钓鱼流程
@@ -127,7 +131,7 @@ class taskControl:
             self.configProcess = "MabinogiMobile.exe"
             self.configResolution = (1280, 960)
             self.configMatchThreshold = 0.86
-            self.configClickRandomOffset = 15
+            self.configClickRandomOffset = 8
             self.saveConfig()
             return
         try:
@@ -144,7 +148,7 @@ class taskControl:
         self.configProcess = data.get("gameProcess", "MabinogiMobile.exe")
         self.configResolution = tuple(data.get("gameResolution", [1280, 960]))
         self.configMatchThreshold = data.get("matchThreshold", 0.86)
-        self.configClickRandomOffset = data.get("clickRandomOffset", 15)
+        self.configClickRandomOffset = data.get("clickRandomOffset", 8)
 
     def saveConfig(self):
         """保存 config.json"""
@@ -544,13 +548,13 @@ class taskControl:
         if self.taskTarget < 4:
             if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
                                             allTimes=6, interval=0.5,
-                                            clickImage=True) is False:
+                                            clickImage=True, matchingDegree=0.88) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
         else:
             if self.circularSearchOperation(imagePath=os.path.join("taskType", str(self.taskType), "%d.png" % self.taskTarget),
                                             allTimes=12, interval=0.2,
-                                            clickImage=True, 
+                                            clickImage=True,  matchingDegree=0.88, 
                                             noHitFun=self.scrollDown, noHitFunParams=3) is False:
                 self.ui.log_printf("ERROR", u"未找到目标采集物，尝试点击失败")
                 return
@@ -614,12 +618,13 @@ class taskControl:
         self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
         self.scrollDown(10)
         self.appBlockWait(0.5)
-        if self.taskFixFailCnt > 2: # 达到失败重试次数，移动到杜巴顿广场再次尝试
+        if self.taskFixFailCnt > 1: # 达到失败重试次数，移动到杜巴顿广场再次尝试
             self.taskFixFailCnt = 0
             # 查找杜巴顿
             if self.circularSearchOperation(imagePath=os.path.join("mapDubadun.png"),
-                                            allTimes=6, interval=0.5,
-                                            clickImage=True, clickOffset=(0, -15)) is False:
+                                            allTimes=3, interval=1.0,
+                                            clickImage=True, clickOffset=(0,-15), matchingDegree=0.8, 
+                                            noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'down')) is False:
                 self.ui.log_printf("ERROR", u"未找到杜巴顿图标，尝试点击失败")
                 return
             self.appBlockWait(1.5)
@@ -650,7 +655,7 @@ class taskControl:
         # 往上拖动地图并查找提尔克那
         if self.circularSearchOperation(imagePath=os.path.join("mapTier.png"),
                                         allTimes=10, interval=1.0,
-                                        clickImage=True, clickOffset=(0,-15),
+                                        clickImage=True, clickOffset=(0,-15), matchingDegree=0.7,
                                         noHitFun=self.cursorSliding, noHitFunParams=((self.configResolution[0] // 2, self.configResolution[1] // 2), 'up')) is False:
             self.taskFixFailCnt += 1
             self.ui.log_printf("ERROR", u"未找到提尔克那图标，尝试点击失败")
@@ -678,38 +683,39 @@ class taskControl:
             self.taskFixFailCnt += 1
             self.ui.log_printf("ERROR", u"未找到修理图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格跳过对话
         self.pressKey("space")
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 点击全部修理
         if self.circularSearchOperation(imagePath=os.path.join("fixAllKey.png"),
                                         allTimes=6, interval=0.5,
-                                        clickImage=True) is False:
+                                        clickImage=True,
+                                        matchingDegree=0.7) is False:
             self.ui.log_printf("ERROR", u"未找到全部修理图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格确认
-        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixKey.png"), matchingDegree=0.7, 
                                         allTimes=6, interval=0.5,
                                         hitKey='space') is False:
             self.ui.log_printf("ERROR", u"未找到修复图标")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 跳过对话
-        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"),
+        if self.circularSearchOperation(imagePath=os.path.join("fixToolOut.png"), matchingDegree=0.7, 
                                         allTimes=6, interval=0.5,
                                         hitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未找到跳过对话图标")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 结束对话
         if self.circularSearchOperation(imagePath=os.path.join("endTalkKey.png"),
                                         allTimes=6, interval=0.5,
                                         clickImage=True) is False:
             self.ui.log_printf("ERROR", u"未找到结束对话图标，尝试点击失败")
             return
-        self.appBlockWait(2.0)
+        self.appBlockWait(3.0)
         # 按下空格跳过对话
         self.pressKey("space")
         self.appBlockWait(1.0)
@@ -892,10 +898,93 @@ class taskControl:
         self.inFishState()
 
     def inFishState(self):
+        skip = False
+        # 检查是否在主页
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+            return
+        self.appBlockWait(1.0)
+        # 进入设置页
+        self.pressKey('esc')
+        self.appBlockWait(1.0)
+        # 环境设定
+        if self.circularSearchOperation(imagePath=os.path.join("envSetting.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("WARNING", u"检查环境设定失败")
+            skip = True
+        self.appBlockWait(1.0)
+        # 移动光标到应用中心
+        if skip is False:
+            self.moveCursor((self.configResolution[0] // 2, self.configResolution[1] // 2))
+            self.appBlockWait(1.0)
+        # 下拉到玩家资讯选项
+        if skip is False:
+            if self.circularSearchOperation(imagePath=os.path.join("settingChooseMark.png"),
+                                            allTimes=12, interval=0.2,
+                                            noHitFun=self.scrollDown, noHitFunParams=3) is False:
+                self.ui.log_printf("WARNING", u"查找玩家资讯选项失败")
+                skip = True
+            self.appBlockWait(1.0)
+        # 检查选项
+        if skip is False:
+            for i in range(2):
+                if self.taskRuning is False: # 任务停止
+                    return False
+                pos = self.findImage(os.path.join("envSetOn1.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    break
+                pos = self.findImage(os.path.join("envSetOn2.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    break
+                pos = self.findImage(os.path.join("envSetOn3.png"))
+                if pos is not None:
+                    skip = True
+                    break
+                pos = self.findImage(os.path.join("envSetOn4.png"))
+                if pos is not None:
+                    self.clickPos(pos)
+                    break
+                if i == 1:
+                    self.ui.log_printf("WARNING", u"未找到玩家资讯选项，尝试点击失败")
+                    skip = True
+            self.appBlockWait(1.0)
+        # 选择只隐藏其他玩家选项
+        if skip is False:
+            if self.circularSearchOperation(imagePath=os.path.join("envTarget.png"),
+                                            allTimes=6, interval=0.5,
+                                            clickImage=True) is False:
+                self.ui.log_printf("WARNING", u"未找到只隐藏其他玩家选项，尝试点击失败")
+            self.appBlockWait(1.0)
+        # 检查是否在主页
+        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+                                        allTimes=6, interval=0.5,
+                                        noHitKey='esc') is False:
+            self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
+            return
+        self.appBlockWait(0.5)
+        # 打开背包
+        self.pressKey('i') 
+        self.appBlockWait(1.0)
+        # 点击宠物栏
+        if self.circularSearchOperation(imagePath=os.path.join("petPage.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("WARNING", u"未找到宠物栏，可能已打开")
+        self.appBlockWait(1.0)
+        # 点击隐藏宠物
+        if self.circularSearchOperation(imagePath=os.path.join("petHide.png"),
+                                        allTimes=6, interval=0.5,
+                                        clickImage=True) is False:
+            self.ui.log_printf("WARNING", u"未找到隐藏宠物选项，可能已选择")
+        self.appBlockWait(1.0)
         moveState = False
         packBackpackCleanCnt = 0
         while self.taskRuning:
-            self.ui.log_printf("WARNING", u"执行钓鱼流程时应收起宠物")
             # 检查是否在主页
             if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
                                             allTimes=6, interval=0.5,
