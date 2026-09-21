@@ -256,14 +256,18 @@ class taskControl:
         origin = win32gui.ClientToScreen(self.hwnd, (left, top))
         return origin, (right - left, bottom - top)
 
-    def findImage(self, rel_path, matchingDegree = 0.0, logging=True):
+    def findImage(self, rel_path, matchingDegree = 0.0, logging=True, shot=None):
         """在当前画面中查找目标图像，返回配置分辨率坐标系下的中心点或 None。
 
         灰度匹配；命中过的模板先在上次位置附近的局部区域（ROI）搜索，
-        未命中再全图搜索，局部匹配可显著降低耗时。
+        未命中再全图搜索。shot 为 None 时截取当前画面，传入则复用同一帧
+        （多图查找时共用）。
         """
         template = self.loadTemplate(rel_path)
-        shot = self.captureGame() if template is not None else None
+        if template is None:
+            return None
+        if shot is None:
+            shot = self.captureGame()
         if shot is None:
             return None
         threshold = matchingDegree if matchingDegree > 0.0 else self.configMatchThreshold
@@ -474,14 +478,27 @@ class taskControl:
                                 hitFun=None, noHitFun=None,
                                 hitFunParams=None, noHitFunParams=None,
                                 matchingDegree = 0.0, logging=True):
+        """循环查找目标图像，命中/未命中时执行相应操作，连续命中 hitOutCnt 次返回 True。
+
+        imagePath 支持传单个图片路径（str）或多个图片路径（list/tuple）；
+        多图时每轮共用一次截屏，任一图片命中即视为匹配到目标，点击、移动
+        光标等动作作用于实际命中图片的位置。
+        """
         if imagePath is None:
             self.ui.log_printf("ERROR", u"请指定图片样本路径")
             return False
+        imagePaths = [imagePath] if isinstance(imagePath, str) else list(imagePath)
         hit = 0
         for i in range(allTimes):
             if self.taskRuning is False: # 任务停止
                 return False
-            pos = self.findImage(imagePath, matchingDegree, logging) # 寻找图片
+            shot = self.captureGame() # 多图共用同一帧画面
+            pos = None
+            if shot is not None:
+                for path in imagePaths: # 任一图片命中即视为匹配到目标
+                    pos = self.findImage(path, matchingDegree, logging, shot=shot)
+                    if pos is not None:
+                        break
             if (pos is not None and hitResults is True)or(pos is None and hitResults is False): # 匹配到目标
                 hit += 1
                 if hit >= hitOutCnt: # 连续匹配
@@ -514,7 +531,7 @@ class taskControl:
     def standardCollectionFlow(self):
         self.ui.log_printf("INFO", u"单轮采集开始")
         # 确认为当前为主界面
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=1.0,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
@@ -594,7 +611,7 @@ class taskControl:
     def fixToolFlow(self):
         self.ui.log_printf("INFO", u"开始执行修复工具流程")
         # 返回主界面
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=0.5,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
@@ -725,7 +742,7 @@ class taskControl:
     def packBackpackFlow(self):
         self.ui.log_printf("INFO", u"开始执行整理背包流程")
         # 进入背包
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=0.5,
                                         hitKey='i') is False:
             self.ui.log_printf("ERROR", u"从主界面进入背包失败")
@@ -779,7 +796,7 @@ class taskControl:
             return
         self.appBlockWait(1.0)
         # 返回主界面
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=0.5,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"从背包返回主界面失败")
@@ -819,7 +836,7 @@ class taskControl:
     
     def fishingSTDFlow(self):
         # 确认为当前为主界面
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=1.0,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
@@ -900,7 +917,7 @@ class taskControl:
     def inFishState(self):
         skip = False
         # 检查是否在主页
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=0.5,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
@@ -961,7 +978,7 @@ class taskControl:
                 self.ui.log_printf("WARNING", u"未找到只隐藏其他玩家选项，尝试点击失败")
             self.appBlockWait(1.0)
         # 检查是否在主页
-        if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+        if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                         allTimes=6, interval=0.5,
                                         noHitKey='esc') is False:
             self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
@@ -986,7 +1003,7 @@ class taskControl:
         packBackpackCleanCnt = 0
         while self.taskRuning:
             # 检查是否在主页
-            if self.circularSearchOperation(imagePath=os.path.join("mainInterfaceMark.png"),
+            if self.circularSearchOperation(imagePath=[os.path.join("mainInterfaceMark.png"), os.path.join("mainInterfaceMark_2.png")],
                                             allTimes=6, interval=0.5,
                                             noHitKey='esc') is False:
                 self.ui.log_printf("ERROR", u"未在主界面，尝试按 Esc 退出失败")
