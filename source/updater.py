@@ -103,7 +103,7 @@ class Updater:
             box = QMessageBox(self.parent)
             box.setIcon(QMessageBox.Icon.Question)
             box.setWindowTitle("发现新版本")
-            box.setText("检测到新版本 %s（当前版本 v%s）。" % (tag, self.appVersion))
+            box.setText("最新版本 %s\n当前版本 %s" % (tag, self.appVersion))
             box.setInformativeText("是否立即下载并更新？\n更新时程序将自动退出、覆盖安装并重新运行。")
             yes = box.addButton("更新", QMessageBox.ButtonRole.YesRole)
             box.addButton("不更新", QMessageBox.ButtonRole.NoRole)

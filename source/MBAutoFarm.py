@@ -9,7 +9,7 @@ from Theme import QtTheme_rc  # noqa: F401  注册 qrc 资源（图标、qss 等
 from taskControl import taskControl
 from updater import Updater
 
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 APP_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
 
 if __name__ == "__main__":
