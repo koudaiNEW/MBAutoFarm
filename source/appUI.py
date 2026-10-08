@@ -397,7 +397,7 @@ class Ui_MBAutoFarmWidget(object):
                 return
             row = self.taskListWidget.currentRow()
             if not (0 <= row < len(self._tasks)):
-                self.log_printf("WARNING", "please select a task first.")
+                self.log_printf("ERROR", "未选择任务，请在任务列表中选择一项任务执行.")
                 return
             self.taskCtl.startTask(self._tasks[row])
             self._taskStatusTimer.start()

@@ -16,6 +16,11 @@ import win32process
 from PIL import ImageGrab
 import json
 
+try:
+    import dxcam
+except ImportError:  # 未安装 dxcam 时全程使用 GDI 截图
+    dxcam = None
+
 APP_SAMPLE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sample")
 
 TH32CS_SNAPPROCESS = 0x00000002
@@ -91,6 +96,8 @@ class taskControl:
         self.taskStartTime = None  # 当前任务开始时间（time.time()）
         self._template_cache = {}
         self._lastPos = {}  # findImage 各模板上次命中的左上角位置（动态 ROI）
+        self._camera = None  # dxcam 相机（懒加载，进程生命周期内复用）
+        self._dxcamFailed = False  # dxcam 初始化失败后不再重试，改用 GDI 截图
         self._greenPixelRange = None  # greenMark.png 绿色判定阈值 (gbMin, grMin, gMin)
         self.taskFixFailCnt = 0
         if configPath:  # 读取配置文件
@@ -172,6 +179,9 @@ class taskControl:
         self.taskTarget = injectionTask['target']
         self.taskBackpackClean = injectionTask['backpackClean']
         self.taskFixTool = injectionTask['fixTool']
+        # 检查配置项
+        if self.taskName is None or self.taskType is None or self.taskTarget is None or self.taskBackpackClean is None or self.taskFixTool is None:
+            self.ui.log_printf("ERROR", u"任务配置不完整，请删除config.json文件后重启软件")
         self.taskRuning = True
         self.taskStartTime = time.time()
         self.ui.log_printf("INFO", u"启动任务线程: name=%s", self.taskName)
@@ -236,18 +246,53 @@ class taskControl:
         return self._template_cache[rel_path]
         
     def captureGame(self):
-        """捕捉窗口客户区画面（彩色）并缩放至目标分辨率。"""
-        try:
-            origin, size = self.clientGeometry()
-            img = ImageGrab.grab(bbox=(origin[0], origin[1],
-                                       origin[0] + size[0],
-                                       origin[1] + size[1]))
-        except OSError as e:
-            self.ui.log_printf("WARNING", u"截图失败: %s", e)
-            return None
-        frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        """捕捉窗口客户区画面（彩色 BGR）并缩放至目标分辨率。
+
+        优先走 dxcam（DXGI 桌面复制，比 GDI 截图快一个数量级）；
+        dxcam 不可用或截图失败时回退 PIL.ImageGrab（GDI）。
+        """
+        origin, size = self.clientGeometry()
+        bbox = (origin[0], origin[1],
+                origin[0] + size[0], origin[1] + size[1])
+        frame = self._grabDxcam(bbox)
+        if frame is None:  # dxcam 不可用/失败，回退 GDI 截图
+            try:
+                img = ImageGrab.grab(bbox=bbox)
+            except OSError as e:
+                self.ui.log_printf("WARNING", u"截图失败: %s", e)
+                return None
+            frame = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         if size != tuple(self.configResolution):  # 已是目标分辨率时跳过多余缩放
             frame = cv2.resize(frame, self.configResolution)
+        return frame
+
+    def _grabDxcam(self, bbox):
+        """用 dxcam 截取主显示器上的 bbox 区域，返回 BGR 帧；不可用返回 None。
+
+        region 坐标基于主显示器原点，与主显示器上的窗口屏幕坐标一致；
+        窗口在副屏或区域越界时 dxcam 无法截取，返回 None 交由调用方回退。
+        new_frame_only=False：画面静止时也返回最新帧（轮询场景常见）。
+        """
+        if dxcam is None or self._dxcamFailed:
+            return None
+        if self._camera is None:
+            try:
+                self._camera = dxcam.create(output_color="BGR")
+            except Exception as e:
+                self.ui.log_printf("WARNING",
+                                   u"dxcam 初始化失败，改用 GDI 截图: %s", e)
+                self._dxcamFailed = True
+                return None
+        try:
+            frame = self._camera.grab(region=bbox, new_frame_only=False)
+        except Exception as e:  # 显示模式变更等：丢弃相机，下次调用时重建
+            self.ui.log_printf("WARNING", u"dxcam 截图异常，改用 GDI 截图: %s", e)
+            self._camera = None
+            return None
+        if (frame is None
+                or frame.shape[0] != bbox[3] - bbox[1]
+                or frame.shape[1] != bbox[2] - bbox[0]):  # 区域越界被裁剪
+            return None
         return frame
 
     def clientGeometry(self):
