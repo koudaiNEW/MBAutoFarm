@@ -128,6 +128,9 @@ class taskControl:
             except Exception as e:
                 self.ui.log_printf("ERROR", u"任务失败：%s, %s", self.taskName, e)
                 self.ui.log_printf("INFO", u"重启任务：%s", self.taskName)
+        if self._camera:  # 释放相机
+            self._camera.stop()
+            self._camera = None
         self.ui.log_printf("INFO", u"任务已停止：%s", self.taskName)
 
     def loadConfig(self):
@@ -278,13 +281,15 @@ class taskControl:
         if self._camera is None:
             try:
                 self._camera = dxcam.create(output_color="BGR")
+                self._camera.start(target_fps=15)
             except Exception as e:
                 self.ui.log_printf("WARNING",
                                    u"dxcam 初始化失败，改用 GDI 截图: %s", e)
                 self._dxcamFailed = True
                 return None
         try:
-            frame = self._camera.grab(region=bbox, new_frame_only=False)
+            # frame = self._camera.grab(region=bbox, new_frame_only=False)
+            frame = self._camera.get_latest_frame()
         except Exception as e:  # 显示模式变更等：丢弃相机，下次调用时重建
             self.ui.log_printf("WARNING", u"dxcam 截图异常，改用 GDI 截图: %s", e)
             self._camera = None
